@@ -32,6 +32,13 @@ enum Cmd {
     },
     /// 常驻弹幕 WSS（打印 JSON 行）
     Barrage { url: String },
+    /// 抖音网页 cookie：查看 / 写入 / 刷新 ttwid
+    Session {
+        #[arg(long)]
+        set: Option<String>,
+        #[arg(long)]
+        refresh: bool,
+    },
 }
 
 fn main() {
@@ -64,6 +71,21 @@ fn main() {
                 token: std::sync::Mutex::new(String::new()),
             });
             api::serve(&host, port, app).expect("serve");
+        }
+        Cmd::Session { set, refresh } => {
+            if let Some(raw) = set {
+                ifupan_core::session::set_raw(&raw);
+            }
+            if refresh {
+                match ifupan_core::session::refresh() {
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&ifupan_core::session::status()).unwrap());
         }
         Cmd::Barrage { url } => {
             use ifupan_core::barrage::BarrageHub;

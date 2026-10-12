@@ -78,6 +78,11 @@ CREATE TABLE IF NOT EXISTS danmu (
   event_time TEXT,
   payload TEXT
 );
+CREATE TABLE IF NOT EXISTS web_session (
+  platform TEXT PRIMARY KEY,
+  cookie TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
 "#;
 
 pub struct Store {
@@ -380,6 +385,27 @@ impl Store {
             "INSERT INTO danmu (video_id, batch_number, msg_type, content, nick_name, user_id,
              event_time, payload) VALUES (?,?,?,?,?,?,?,?)",
             params![video_id, batch, msg_type, content, nick, user_id, event_time, payload],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_web_session(&self, platform: &str) -> rusqlite::Result<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT cookie FROM web_session WHERE platform=?1",
+            params![platform],
+            |r| r.get(0),
+        )
+        .optional()
+        .map(|v| v.unwrap_or_default())
+    }
+
+    pub fn put_web_session(&self, platform: &str, cookie: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO web_session (platform, cookie, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(platform) DO UPDATE SET cookie=excluded.cookie, updated_at=excluded.updated_at",
+            params![platform, cookie, crate::models::now_str()],
         )?;
         Ok(())
     }

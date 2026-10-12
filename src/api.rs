@@ -33,6 +33,23 @@ impl App {
                 *self.token.lock().unwrap() = query.get("token").cloned().unwrap_or_default();
                 ok(json!(true))
             }
+            ("GET", "/api/config/session") => ok(crate::session::status()),
+            ("POST", "/api/config/session") => {
+                let raw = body
+                    .get("cookie")
+                    .or_else(|| body.get("cookies"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if raw.is_empty() {
+                    return err(1, "cookie required");
+                }
+                crate::session::set_raw(raw);
+                ok(crate::session::status())
+            }
+            ("GET", "/api/config/session/refresh") => match crate::session::refresh() {
+                Ok(_) => ok(crate::session::status()),
+                Err(e) => err(1, &e),
+            },
             ("GET", "/api/config/getClientVersionConfig") => ok(json!({
                 "clientVersion": "2.6.3.1",
                 "isVersionSelect": 1,

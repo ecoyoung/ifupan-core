@@ -13,6 +13,7 @@ pub mod pool;
 pub mod proto_wire;
 pub mod recorder;
 pub mod scheduler;
+pub mod session;
 pub mod webcast;
 
 pub use models::{Anchor, ClientConfig, LiveRoom, PlatformValue};
@@ -64,6 +65,7 @@ mod tests {
 
     #[test]
     fn store_roundtrip() {
+        let _g = crate::session::lock_for_test();
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("t.sqlite");
         let pipe = Pipeline::new(db.to_str().unwrap(), dir.path().to_str().unwrap()).unwrap();
@@ -97,6 +99,7 @@ mod tests {
 
     #[test]
     fn api_routes() {
+        let _g = crate::session::lock_for_test();
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("t.sqlite");
         let pipe = Pipeline::new(db.to_str().unwrap(), dir.path().to_str().unwrap()).unwrap();
@@ -119,6 +122,43 @@ mod tests {
         let st = app.handle("GET", "/api/system/status", &Default::default(), json!({}));
         assert_eq!(st["code"], 0);
         assert_eq!(st["data"]["max_concurrency"], 4);
+        let s = app.handle(
+            "POST",
+            "/api/config/session",
+            &Default::default(),
+            json!({"cookie":"ttwid=abcdefghijk; msToken=zzz"}),
+        );
+        assert_eq!(s["code"], 0);
+        assert_eq!(s["data"]["has_ttwid"], true);
+        let g = app.handle("GET", "/api/config/session", &Default::default(), json!({}));
+        assert_eq!(g["data"]["has_ttwid"], true);
+    }
+
+    #[test]
+    fn cookie_jar_parse_and_merge() {
+        let mut j = crate::session::CookieJar::parse("ttwid=abcdefghijk; Path=/; Domain=.douyin.com");
+        assert!(j.has_ttwid());
+        assert_eq!(j.get("ttwid"), Some("abcdefghijk"));
+        assert!(j.get("Path").is_none());
+        j.merge("msToken=hello; HttpOnly");
+        assert_eq!(j.get("msToken"), Some("hello"));
+        let h = j.header();
+        assert!(h.contains("ttwid=abcdefghijk"));
+        assert!(h.contains("msToken=hello"));
+        assert!(!h.to_ascii_lowercase().contains("httponly"));
+    }
+
+    #[test]
+    fn session_roundtrip_store() {
+        let _g = crate::session::lock_for_test();
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("t.sqlite");
+        let pipe = Pipeline::new(db.to_str().unwrap(), dir.path().to_str().unwrap()).unwrap();
+        crate::session::set_raw("ttwid=storedttwidvalue");
+        let raw = pipe.store.get_web_session("douyin").unwrap();
+        assert!(raw.contains("ttwid=storedttwidvalue"));
+        crate::session::install(pipe.store.clone());
+        assert!(crate::session::current().has_ttwid());
     }
 
     #[test]

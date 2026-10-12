@@ -110,6 +110,7 @@ src/
 ├── analysis.rs      demux + Ark chat completions
 ├── api.rs           std TCP JSON server
 ├── db.rs            rusqlite (bundled)
+├── session.rs       Douyin cookie jar (ttwid)
 ├── crypto.rs        machine-code MD5
 ├── models.rs        domain types
 └── pipeline.rs      composition root
@@ -134,7 +135,14 @@ cargo run -- serve --host 127.0.0.1 --port 5001
 cargo run -- barrage https://live.douyin.com/<web_rid>
 ```
 
-Room enter is cookie-sensitive. Unauthenticated Douyin probes often return a non-JSON challenge (`error: "bad json"`); classification still succeeds. Ingest needs `ffmpeg` on `PATH`.
+Room enter is cookie-sensitive. Persist a Douyin web cookie (at least `ttwid`) so probe and barrage share the same jar:
+
+```bash
+cargo run -- session --refresh
+cargo run -- session --set 'ttwid=...; msToken=...'
+```
+
+`GET /api/config/session` shows keys only (prefix, not the secret). Missing cookies still classify the URL; enter may return `error: "bad json"`. Ingest needs `ffmpeg` on `PATH`.
 
 `ARK_API_KEY` enables Volcengine Ark completions (`doubao-pro-32k`). Without it, diagnosis returns a structured placeholder.
 
@@ -152,7 +160,7 @@ Covered by tests: URL algebra, SQLite roster, local REST, danmaku type map, gzip
 
 ```
 cargo test
-# 11 passed
+# 13 passed
 ```
 
 ## License

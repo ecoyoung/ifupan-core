@@ -110,6 +110,7 @@ src/
 ├── analysis.rs      解复用 + 方舟 chat completions
 ├── api.rs           标准库 TCP JSON 服务
 ├── db.rs            rusqlite（bundled）
+├── session.rs       抖音 cookie 罐（ttwid）
 ├── crypto.rs        机器码 MD5
 ├── models.rs        领域类型
 └── pipeline.rs      组合根
@@ -134,7 +135,14 @@ cargo run -- serve --host 127.0.0.1 --port 5001
 cargo run -- barrage https://live.douyin.com/<web_rid>
 ```
 
-房间探测对 cookie 敏感。未登录的抖音 enter 经常返回非 JSON（`error: "bad json"`），URL 分类不受影响。拉流需要 `PATH` 里有 `ffmpeg`。
+房间探测对 cookie 敏感。把抖音网页 cookie（至少 `ttwid`）存下来，探测和弹幕共用：
+
+```bash
+cargo run -- session --refresh
+cargo run -- session --set 'ttwid=...; msToken=...'
+```
+
+`GET /api/config/session` 只回 keys / 前缀，不回完整密钥。没有 cookie 时 URL 分类仍可用，enter 可能是 `error: "bad json"`。拉流需要 `PATH` 里有 `ffmpeg`。
 
 设置 `ARK_API_KEY` 后走火山方舟（`doubao-pro-32k`）。没有 key 时诊断返回结构化占位。
 
@@ -152,7 +160,7 @@ cargo run -- barrage https://live.douyin.com/<web_rid>
 
 ```
 cargo test
-# 11 passed
+# 13 passed
 ```
 
 ## 许可

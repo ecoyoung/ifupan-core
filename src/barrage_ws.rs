@@ -9,7 +9,6 @@ use tungstenite::http::header::{COOKIE, USER_AGENT};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{connect, Message, WebSocket};
 
-use crate::detector;
 use crate::models::DanmuEvent;
 use crate::webcast::{encode_ack, encode_heartbeat, events_from_frame};
 
@@ -34,13 +33,14 @@ pub fn run_loop(req: BarrageStart, stop: Arc<AtomicBool>, sink: Arc<dyn Fn(Danmu
     let mut backoff = 1u64;
     let mut host_i = 0usize;
     while !stop.load(Ordering::SeqCst) {
-        let ttwid = fetch_ttwid();
+        crate::session::ensure();
+        let cookie = crate::session::header();
         let url = if req.wss_url.starts_with("wss://") {
             req.wss_url.clone()
         } else {
             build_wss(HOSTS[host_i % HOSTS.len()], &req.room_id)
         };
-        match open_socket(&url, &ttwid) {
+        match open_socket(&url, &cookie) {
             Ok(mut ws) => {
                 backoff = 1;
                 set_read_timeout(&mut ws, Duration::from_secs(12));
@@ -96,24 +96,16 @@ fn build_wss(host: &str, room_id: &str) -> String {
     )
 }
 
-fn fetch_ttwid() -> String {
-    match detector::http_get_public("https://live.douyin.com/") {
-        Ok((_, _, cookie)) => cookie,
-        Err(_) => String::new(),
-    }
-}
-
 fn open_socket(
     url: &str,
-    ttwid: &str,
+    cookie: &str,
 ) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, String> {
     let mut req = url.into_client_request().map_err(|e| e.to_string())?;
     req.headers_mut()
         .insert(USER_AGENT, UA.parse().map_err(|e: tungstenite::http::header::InvalidHeaderValue| e.to_string())?);
-    if !ttwid.is_empty() {
-        let c = format!("ttwid={ttwid}");
+    if !cookie.is_empty() {
         req.headers_mut()
-            .insert(COOKIE, c.parse().map_err(|e: tungstenite::http::header::InvalidHeaderValue| e.to_string())?);
+            .insert(COOKIE, cookie.parse().map_err(|e: tungstenite::http::header::InvalidHeaderValue| e.to_string())?);
     }
     let (ws, _) = connect(req).map_err(|e| e.to_string())?;
     Ok(ws)

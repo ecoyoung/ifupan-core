@@ -19,6 +19,7 @@ impl Pipeline {
         }
         let _ = std::fs::create_dir_all(save_path);
         let store = Arc::new(Store::open(db_path).map_err(|e| e.to_string())?);
+        crate::session::install(store.clone());
         let mut cfg = store.get_config().map_err(|e| e.to_string())?;
         cfg.save_path = save_path.to_string();
         store.save_config(&cfg).map_err(|e| e.to_string())?;

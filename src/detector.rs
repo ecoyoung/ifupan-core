@@ -8,7 +8,7 @@ use crate::platforms::{match_url, ParsedLiveUrl};
 
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-fn agent() -> &'static ureq::Agent {
+pub(crate) fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
         ureq::AgentBuilder::new()
@@ -21,53 +21,34 @@ fn agent() -> &'static ureq::Agent {
 }
 
 fn http_get(url: &str) -> Result<(u16, String, String), String> {
-    match agent().get(url).call() {
+    crate::session::ensure();
+    let cookie = crate::session::header();
+    let mut req = agent().get(url);
+    if url.contains("douyin.com") {
+        req = req
+            .set("Referer", "https://live.douyin.com/")
+            .set("Origin", "https://live.douyin.com");
+    }
+    if !cookie.is_empty() {
+        req = req.set("Cookie", &cookie);
+    }
+    match req.call() {
         Ok(resp) => {
             let status = resp.status();
             let final_url = resp.get_url().to_string();
+            let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
+            crate::session::merge_raw(&set_cookie);
             let body = resp.into_string().unwrap_or_default();
             Ok((status, body, final_url))
         }
         Err(ureq::Error::Status(code, resp)) => {
+            let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
+            crate::session::merge_raw(&set_cookie);
             let body = resp.into_string().unwrap_or_default();
             Ok((code, body, url.to_string()))
         }
         Err(e) => Err(e.to_string()),
     }
-}
-
-/// status, body, ttwid
-pub(crate) fn http_get_public(url: &str) -> Result<(u16, String, String), String> {
-    match agent().get(url).call() {
-        Ok(resp) => {
-            let status = resp.status();
-            let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
-            let body = resp.into_string().unwrap_or_default();
-            Ok((status, body.clone(), extract_ttwid(&set_cookie, &body)))
-        }
-        Err(ureq::Error::Status(code, resp)) => {
-            let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
-            let body = resp.into_string().unwrap_or_default();
-            Ok((code, body.clone(), extract_ttwid(&set_cookie, &body)))
-        }
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-fn extract_ttwid(header: &str, body: &str) -> String {
-    for src in [header, body] {
-        if let Some(i) = src.find("ttwid=") {
-            let rest = &src[i + 6..];
-            let end = rest
-                .find(|c: char| c == ';' || c == '"' || c == '&' || c.is_whitespace())
-                .unwrap_or_else(|| rest.len().min(180));
-            let v = &rest[..end];
-            if v.len() > 8 {
-                return v.to_string();
-            }
-        }
-    }
-    String::new()
 }
 
 pub fn detect(url: &str) -> LiveRoom {
@@ -139,13 +120,26 @@ fn detect_douyin(parsed: &ParsedLiveUrl) -> LiveRoom {
     let payload: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(_) => {
+            if crate::session::refresh().is_ok() {
+                if let Ok((code2, body2, _)) = http_get(&api) {
+                    if code2 == 200 {
+                        if let Ok(v) = serde_json::from_str::<Value>(&body2) {
+                            return finish_douyin(parsed, web_rid, v);
+                        }
+                    }
+                }
+            }
             return LiveRoom {
                 web_rid,
                 error: "bad json".into(),
                 ..LiveRoom::default()
-            }
+            };
         }
     };
+    finish_douyin(parsed, web_rid, payload)
+}
+
+fn finish_douyin(parsed: &ParsedLiveUrl, web_rid: String, payload: Value) -> LiveRoom {
     let data = payload.get("data").cloned().unwrap_or(Value::Null);
     let room = data
         .get("data")
