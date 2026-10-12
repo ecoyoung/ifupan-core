@@ -1,0 +1,19 @@
+[package]
+name = "ifupan-core"
+version = "0.1.0"
+edition = "2021"
+description = "爱复盘 2.6.3.1 core pipeline rewritten in Rust"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+md5 = "0.7"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json", "tls"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

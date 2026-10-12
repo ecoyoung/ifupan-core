@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+data/
+recordings/
+.DS_Store
+*.sqlite
+*.sqlite-journal

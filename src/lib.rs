@@ -1,0 +1,116 @@
+pub mod analysis;
+pub mod api;
+pub mod barrage;
+pub mod collectors;
+pub mod crypto;
+pub mod db;
+pub mod detector;
+pub mod models;
+pub mod pipeline;
+pub mod platforms;
+pub mod recorder;
+pub mod scheduler;
+
+pub use models::{Anchor, ClientConfig, LiveRoom, PlatformValue};
+pub use pipeline::Pipeline;
+pub use platforms::match_url;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::barrage::ingest;
+    use crate::crypto::machine_code;
+    use serde_json::json;
+
+    #[test]
+    fn url_douyin_rid() {
+        let p = match_url("https://live.douyin.com/123456").unwrap();
+        assert_eq!(p.spec.bean, "DouYinLive");
+        assert_eq!(p.web_rid, "123456");
+        assert_eq!(p.spec.platform_value, 0);
+    }
+
+    #[test]
+    fn url_share_home() {
+        assert_eq!(
+            match_url("https://v.douyin.com/abc/").unwrap().spec.bean,
+            "DouYinAppShareLive"
+        );
+        let home = match_url("https://www.douyin.com/user/MS4wLjABxxxx").unwrap();
+        assert_eq!(home.spec.bean, "DouYinHomeLive");
+        assert!(home.sec_uid.starts_with("MS4"));
+    }
+
+    #[test]
+    fn url_other() {
+        assert_eq!(
+            match_url("https://www.tiktok.com/@foo").unwrap().spec.platform_value,
+            1
+        );
+        assert_eq!(
+            match_url("https://live.kuaishou.com/u/bar").unwrap().spec.platform_value,
+            2
+        );
+        assert_eq!(
+            match_url("https://www.redelight.cn/live/x").unwrap().spec.platform_value,
+            4
+        );
+        assert!(match_url("https://example.com/live").is_err());
+    }
+
+    #[test]
+    fn store_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("t.sqlite");
+        let pipe = Pipeline::new(db.to_str().unwrap(), dir.path().to_str().unwrap()).unwrap();
+        let a = pipe.add("https://live.douyin.com/999").unwrap();
+        assert!(a.id.is_some());
+        let rows = pipe.store.list_anchors().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].web_rid, "999");
+        assert_eq!(pipe.store.get_config().unwrap().slice_minutes(), 240);
+    }
+
+    #[test]
+    fn barrage_map() {
+        let ev = ingest(
+            &json!({"method":"WebcastChatMessage","content":"hi","user":{"nickname":"n","id":"1"}}),
+            "vid",
+            "batch",
+        );
+        assert_eq!(ev.msg_type, 1);
+        let ev2 = ingest(&json!({"method":"WebcastGiftMessage","gift_name":"rose","gift_count":2}), "vid", "batch");
+        assert_eq!(ev2.msg_type, 5);
+    }
+
+    #[test]
+    fn machine_code_stable() {
+        let a = machine_code("cpu", "disk", "board");
+        let b = machine_code("cpu", "disk", "board");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 32);
+    }
+
+    #[test]
+    fn api_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("t.sqlite");
+        let pipe = Pipeline::new(db.to_str().unwrap(), dir.path().to_str().unwrap()).unwrap();
+        let app = api::App {
+            store: pipe.store.clone(),
+            scheduler: pipe.scheduler.clone(),
+            token: std::sync::Mutex::new(String::new()),
+        };
+        let r = app.handle("GET", "/api/system/getMachineCode", &Default::default(), json!({}));
+        assert_eq!(r["code"], 0);
+        let r = app.handle(
+            "POST",
+            "/api/anchorinfo/AddOrUpdateAnchor",
+            &Default::default(),
+            json!({"url":"https://live.douyin.com/1"}),
+        );
+        assert_eq!(r["code"], 0);
+        let missing = app.handle("GET", "/nope", &Default::default(), json!({}));
+        assert_eq!(missing["code"], -9);
+    }
+}
