@@ -90,6 +90,13 @@ impl Store {
             let _ = std::fs::create_dir_all(parent);
         }
         let conn = Connection::open(path)?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA busy_timeout=5000;
+             PRAGMA temp_store=MEMORY;
+             PRAGMA foreign_keys=ON;",
+        )?;
         conn.execute_batch(SCHEMA)?;
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM config", [], |r| r.get(0))?;
         if n == 0 {
@@ -123,6 +130,7 @@ impl Store {
                 hide_size: r.get(9)?,
                 live_notice: r.get(10)?,
                 online_number: r.get(11)?,
+                ..ClientConfig::default()
             })
         })
     }

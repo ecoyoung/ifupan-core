@@ -56,7 +56,7 @@ Seven stages, one process:
 
 1. **Classify** the URL into a platform bean (prefix, then host fallback).
 2. **Probe** the room (Douyin webcast enter; HTML markers elsewhere).
-3. **Schedule** on `detection_fre` (default 10s).
+3. **Schedule** on `detection_fre` (default 10s), bounded by `max_concurrency` (4) with `stagger_delay_ms` (500). Auto-record when the room is live.
 4. **Ingest** FLV/HLS with ffmpeg, sliced on `limit_type=2` minutes (default 240).
 5. **Fold** realtime events into `danmu`.
 6. **Collect** optional dashboard adapters (Compass / Qianchuan — cookie-gated).
@@ -116,7 +116,7 @@ src/
 Constraints:
 
 - **No async runtime.** Detection, ffmpeg, and HTTP are OS threads. One binary, predictable scheduling.
-- **ffmpeg is the recorder.** Copy-codec slice (`-c copy -t N`) is portable across macOS / Linux / Windows.
+- **ffmpeg is the recorder.** Copy-codec slice (`-c copy -t N`) plus HTTP reconnect (`-reconnect 1`). A dropped socket opens the next paragraph file instead of killing the session.
 - **Dry-run without ffmpeg.** Writes an `FLV\x01` placeholder so the scheduler can be tested on a laptop.
 - **Collectors are capability-gated.** Dashboard endpoints exist; sessions are not invented.
 

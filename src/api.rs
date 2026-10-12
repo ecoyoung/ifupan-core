@@ -21,6 +21,7 @@ impl App {
     pub fn handle(&self, method: &str, path: &str, query: &HashMap<String, String>, body: Value) -> Value {
         match (method, path) {
             ("GET", "/api/system/getMachineCode") => ok(json!(machine_code("cpu", "disk", "board"))),
+            ("GET", "/api/system/status") => ok(self.scheduler.status()),
             ("GET", "/api/config/getuserinfo") => ok(json!({
                 "username": "local",
                 "token": self.token.lock().unwrap().clone(),

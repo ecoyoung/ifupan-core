@@ -8,6 +8,7 @@ pub mod detector;
 pub mod models;
 pub mod pipeline;
 pub mod platforms;
+pub mod pool;
 pub mod recorder;
 pub mod scheduler;
 
@@ -112,5 +113,24 @@ mod tests {
         assert_eq!(r["code"], 0);
         let missing = app.handle("GET", "/nope", &Default::default(), json!({}));
         assert_eq!(missing["code"], -9);
+        let st = app.handle("GET", "/api/system/status", &Default::default(), json!({}));
+        assert_eq!(st["code"], 0);
+        assert_eq!(st["data"]["max_concurrency"], 4);
+    }
+
+    #[test]
+    fn pool_caps_inflight() {
+        let peak = crate::pool::peak_inflight(8, 3, 30);
+        assert!(peak <= 3, "peak={peak}");
+        assert!(peak >= 1);
+    }
+
+    #[test]
+    fn ffmpeg_reconnect_flags() {
+        let flags = crate::recorder::ffmpeg_input_flags(true);
+        assert!(flags.contains(&"-reconnect"));
+        assert!(flags.contains(&"-reconnect_streamed"));
+        let off = crate::recorder::ffmpeg_input_flags(false);
+        assert!(!off.contains(&"-reconnect"));
     }
 }

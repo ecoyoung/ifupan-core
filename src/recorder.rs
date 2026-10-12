@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::models::{now_str, Anchor, AnchorVideo, ClientConfig, RecordStatus};
 
@@ -15,17 +15,16 @@ pub struct RecordSession {
 
 pub struct Recorder {
     pub cfg: ClientConfig,
-    sessions: Mutex<HashMap<i64, Arc<RecordSession>>>,
+    sessions: Arc<Mutex<HashMap<i64, Arc<RecordSession>>>>,
     ffmpeg: Option<PathBuf>,
 }
 
 impl Recorder {
     pub fn new(cfg: ClientConfig) -> Self {
-        let ffmpeg = which("ffmpeg");
         Self {
+            ffmpeg: which("ffmpeg"),
             cfg,
-            sessions: Mutex::new(HashMap::new()),
-            ffmpeg,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -33,29 +32,33 @@ impl Recorder {
         self.sessions.lock().unwrap().contains_key(&anchor_id)
     }
 
+    pub fn recording_ids(&self) -> Vec<i64> {
+        self.sessions.lock().unwrap().keys().copied().collect()
+    }
+
     pub fn start(&self, anchor: &Anchor, stream_url: &str, live_title: &str) -> Result<AnchorVideo, String> {
         if stream_url.is_empty() {
             return Err("empty stream_url".into());
+        }
+        let aid = anchor.id.unwrap_or(0);
+        if self.is_recording(aid) {
+            return Err("already recording".into());
         }
         let save_root = PathBuf::from(if self.cfg.save_path.is_empty() {
             "./recordings"
         } else {
             &self.cfg.save_path
         });
-        let aid = anchor.id.unwrap_or(0);
         let dir = save_root.join(aid.to_string());
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let batch = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
         let video_id = uuid::Uuid::new_v4().simple().to_string();
-        let name = format!(
-            "{}_{}_p1.flv",
-            if anchor.anchor_name.is_empty() {
-                &anchor.web_rid
-            } else {
-                &anchor.anchor_name
-            },
-            batch
-        );
+        let stem = if anchor.anchor_name.is_empty() {
+            anchor.web_rid.clone()
+        } else {
+            anchor.anchor_name.clone()
+        };
+        let name = format!("{stem}_{batch}_p1.flv");
         let out = dir.join(&name);
         let video = AnchorVideo {
             id: None,
@@ -78,17 +81,21 @@ impl Recorder {
             sec_uid: anchor.sec_uid.clone(),
             platform_type: anchor.platform_value.to_string(),
         };
-        let stop = Arc::new(Mutex::new(false));
         let session = Arc::new(RecordSession {
             video_id: video_id.clone(),
-            stop: stop.clone(),
+            stop: Arc::new(Mutex::new(false)),
             child: Mutex::new(None),
         });
         self.sessions.lock().unwrap().insert(aid, session.clone());
         let slice_sec = self.cfg.slice_minutes() * 60;
         let ffmpeg = self.ffmpeg.clone();
         let stream = stream_url.to_string();
-        thread::spawn(move || run_record(ffmpeg, stream, out, slice_sec, session));
+        let reconnect = self.cfg.reconnect;
+        let sessions = self.sessions.clone();
+        thread::spawn(move || {
+            run_record(ffmpeg, stream, out, slice_sec, reconnect, session);
+            sessions.lock().unwrap().remove(&aid);
+        });
         Ok(video)
     }
 
@@ -103,23 +110,68 @@ impl Recorder {
     }
 }
 
+pub fn ffmpeg_input_flags(reconnect: bool) -> Vec<&'static str> {
+    let mut v = vec!["-hide_banner", "-loglevel", "error", "-nostdin"];
+    if reconnect {
+        v.extend([
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_on_network_error",
+            "1",
+            "-reconnect_delay_max",
+            "4",
+            "-reconnect_at_eof",
+            "1",
+        ]);
+    }
+    v
+}
+
 fn run_record(
     ffmpeg: Option<PathBuf>,
     stream: String,
     out: PathBuf,
     slice_sec: u64,
+    reconnect: bool,
     session: Arc<RecordSession>,
 ) {
-    if let Some(bin) = ffmpeg {
-        let child = Command::new(bin)
-            .args(["-y", "-hide_banner", "-loglevel", "error", "-i", &stream, "-c", "copy", "-t"])
-            .arg(slice_sec.to_string())
-            .arg(&out)
+    if ffmpeg.is_none() {
+        let _ = std::fs::write(&out, b"FLV\x01dry-run");
+        for _ in 0..15 {
+            if *session.stop.lock().unwrap() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+        return;
+    }
+    let bin = ffmpeg.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(slice_sec.max(1));
+    let mut paragraph: u32 = 1;
+    while !*session.stop.lock().unwrap() && Instant::now() < deadline {
+        let remain = deadline.saturating_duration_since(Instant::now());
+        if remain.as_secs() < 2 {
+            break;
+        }
+        let dest = if paragraph == 1 {
+            out.clone()
+        } else {
+            let stem = out.file_stem().and_then(|s| s.to_str()).unwrap_or("seg");
+            let parent = out.parent().unwrap_or_else(|| Path::new("."));
+            parent.join(format!("{stem}_r{paragraph}.flv"))
+        };
+        let flags = ffmpeg_input_flags(reconnect);
+        let mut cmd = Command::new(&bin);
+        cmd.args(&flags)
+            .args(["-y", "-i", &stream, "-c", "copy", "-t"])
+            .arg(remain.as_secs().to_string())
+            .arg(&dest)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-        match child {
+            .stderr(Stdio::null());
+        match cmd.spawn() {
             Ok(c) => {
                 *session.child.lock().unwrap() = Some(c);
                 loop {
@@ -128,7 +180,7 @@ fn run_record(
                             let _ = ch.kill();
                             let _ = ch.wait();
                         }
-                        break;
+                        return;
                     }
                     let done = session
                         .child
@@ -144,17 +196,15 @@ fn run_record(
                 }
             }
             Err(_) => {
-                let _ = std::fs::write(&out, b"FLV\x01dry-run");
-            }
-        }
-    } else {
-        let _ = std::fs::write(&out, b"FLV\x01dry-run");
-        for _ in 0..15 {
-            if *session.stop.lock().unwrap() {
+                let _ = std::fs::write(&dest, b"FLV\x01dry-run");
                 break;
             }
-            thread::sleep(Duration::from_millis(200));
         }
+        if *session.stop.lock().unwrap() || Instant::now() >= deadline {
+            break;
+        }
+        paragraph += 1;
+        thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -173,6 +223,5 @@ fn which(name: &str) -> Option<PathBuf> {
             }
         }
     }
-    let _ = Path::new(name);
     None
 }

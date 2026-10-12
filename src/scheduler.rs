@@ -8,12 +8,13 @@ use crate::db::Store;
 use crate::detector::detect;
 use crate::models::{now_str, Anchor, ClientConfig, LiveRoom, LiveStatus, RecordStatus};
 use crate::platforms::match_url;
+use crate::pool::run_bounded;
 use crate::recorder::Recorder;
 
 pub struct Scheduler {
     store: Arc<Store>,
     cfg: ClientConfig,
-    recorder: Recorder,
+    recorder: Arc<Recorder>,
     stop: Arc<AtomicBool>,
     pub detecting: Arc<AtomicBool>,
 }
@@ -21,12 +22,16 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn new(store: Arc<Store>, cfg: ClientConfig) -> Self {
         Self {
-            recorder: Recorder::new(cfg.clone()),
+            recorder: Arc::new(Recorder::new(cfg.clone())),
             store,
             cfg,
             stop: Arc::new(AtomicBool::new(false)),
             detecting: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn recorder(&self) -> Arc<Recorder> {
+        self.recorder.clone()
     }
 
     pub fn add_anchor(&self, url: &str, auto_record: i64, barrage: i64) -> Result<Anchor, String> {
@@ -74,6 +79,9 @@ impl Scheduler {
     }
 
     pub fn start_record(&self, anchor_id: i64) -> Result<serde_json::Value, String> {
+        if self.recorder.is_recording(anchor_id) {
+            return Ok(serde_json::json!({"ok": true, "already": true}));
+        }
         let mut a = self
             .store
             .get_anchor(anchor_id)
@@ -90,20 +98,7 @@ impl Scheduler {
         }
         apply_room(&mut a, &room);
         self.store.upsert_anchor(&mut a).map_err(|e| e.to_string())?;
-        let stream = if room.stream_url.is_empty() {
-            &room.hls_url
-        } else {
-            &room.stream_url
-        };
-        let video = self.recorder.start(&a, stream, &room.title)?;
-        let _ = self.store.insert_video(&video);
-        a.record_status = RecordStatus::Recording as i64;
-        self.store.upsert_anchor(&mut a).map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({
-            "ok": true,
-            "video_id": video.video_id,
-            "path": video.storage_path,
-        }))
+        self.ingest(&a, &room)
     }
 
     pub fn stop_record(&self, anchor_id: i64) -> Result<serde_json::Value, String> {
@@ -115,33 +110,89 @@ impl Scheduler {
         Ok(serde_json::json!({"ok": true}))
     }
 
+    fn ingest(&self, a: &Anchor, room: &LiveRoom) -> Result<serde_json::Value, String> {
+        let stream = if room.stream_url.is_empty() {
+            &room.hls_url
+        } else {
+            &room.stream_url
+        };
+        let video = self.recorder.start(a, stream, &room.title)?;
+        let _ = self.store.insert_video(&video);
+        if let Some(id) = a.id {
+            if let Ok(Some(mut row)) = self.store.get_anchor(id) {
+                row.record_status = RecordStatus::Recording as i64;
+                row.last_record_time = now_str();
+                let _ = self.store.upsert_anchor(&mut row);
+            }
+        }
+        Ok(serde_json::json!({
+            "ok": true,
+            "video_id": video.video_id,
+            "path": video.storage_path,
+        }))
+    }
+
     pub fn start_detection(&self) {
         if self.detecting.swap(true, Ordering::SeqCst) {
             return;
         }
         self.stop.store(false, Ordering::SeqCst);
         let store = self.store.clone();
+        let recorder = self.recorder.clone();
         let stop = self.stop.clone();
         let detecting = self.detecting.clone();
         let interval = self.cfg.detection_fre.max(2) as u64;
+        let max_conc = self.cfg.max_concurrency;
+        let stagger = self.cfg.stagger_delay_ms;
         thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
-                if let Ok(anchors) = store.list_anchors() {
-                    for mut a in anchors {
-                        if stop.load(Ordering::SeqCst) {
-                            break;
-                        }
+                let anchors = store.list_anchors().unwrap_or_default();
+                let stop2 = stop.clone();
+                let store2 = store.clone();
+                let recorder2 = recorder.clone();
+                run_bounded(
+                    anchors,
+                    max_conc,
+                    stagger,
+                    || stop2.load(Ordering::SeqCst),
+                    move |mut a| {
                         let url = first_url(&a);
                         if url.is_empty() {
-                            continue;
+                            return;
                         }
                         let room = detect(&url);
                         apply_room(&mut a, &room);
-                        let _ = store.upsert_anchor(&mut a);
+                        let _ = store2.upsert_anchor(&mut a);
                         let _ = collect_all(&a, Some(&room));
-                    }
+                        let Some(id) = a.id else { return };
+                        if room.live
+                            && a.is_auto_record != 0
+                            && !recorder2.is_recording(id)
+                            && !(room.stream_url.is_empty() && room.hls_url.is_empty())
+                        {
+                            let stream = if room.stream_url.is_empty() {
+                                &room.hls_url
+                            } else {
+                                &room.stream_url
+                            };
+                            if let Ok(video) = recorder2.start(&a, stream, &room.title) {
+                                let _ = store2.insert_video(&video);
+                                a.record_status = RecordStatus::Recording as i64;
+                                a.last_record_time = now_str();
+                                let _ = store2.upsert_anchor(&mut a);
+                            }
+                        }
+                        if !room.live && recorder2.is_recording(id) {
+                            recorder2.stop(id);
+                            a.record_status = RecordStatus::Idle as i64;
+                            let _ = store2.upsert_anchor(&mut a);
+                        }
+                    },
+                );
+                let end = std::time::Instant::now() + Duration::from_secs(interval);
+                while !stop.load(Ordering::SeqCst) && std::time::Instant::now() < end {
+                    thread::sleep(Duration::from_millis(200));
                 }
-                thread::sleep(Duration::from_secs(interval));
             }
             detecting.store(false, Ordering::SeqCst);
         });
@@ -156,6 +207,17 @@ impl Scheduler {
                 }
             }
         }
+    }
+
+    pub fn status(&self) -> serde_json::Value {
+        serde_json::json!({
+            "detecting": self.detecting.load(Ordering::SeqCst),
+            "recording": self.recorder.recording_ids(),
+            "max_concurrency": self.cfg.max_concurrency,
+            "stagger_delay_ms": self.cfg.stagger_delay_ms,
+            "reconnect": self.cfg.reconnect,
+            "detection_fre": self.cfg.detection_fre,
+        })
     }
 }
 

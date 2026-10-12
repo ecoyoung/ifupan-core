@@ -1,3 +1,6 @@
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use serde_json::Value;
 
 use crate::models::{LiveRoom, PlatformValue};
@@ -5,11 +8,16 @@ use crate::platforms::{match_url, ParsedLiveUrl};
 
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .user_agent(UA)
-        .timeout(std::time::Duration::from_secs(12))
-        .build()
+fn agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .user_agent(UA)
+            .timeout(Duration::from_secs(8))
+            .max_idle_connections(16)
+            .max_idle_connections_per_host(8)
+            .build()
+    })
 }
 
 fn http_get(url: &str) -> Result<(u16, String, String), String> {

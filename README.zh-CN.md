@@ -56,7 +56,7 @@ flowchart LR
 
 1. **分类**：URL → 平台 bean（前缀优先，其次 host）。
 2. **探测**：抖音走 webcast enter，其它平台读页面标记。
-3. **调度**：间隔 `detection_fre`（默认 10 秒）。
+3. **调度**：间隔 `detection_fre`（默认 10 秒），并发上限 `max_concurrency`（4），启动错峰 `stagger_delay_ms`（500）。开播则自动录。
 4. **拉流**：ffmpeg 吃 FLV/HLS，按 `limit_type=2` 的分钟数切片（默认 240）。
 5. **折叠**：实时事件写入 `danmu`。
 6. **采集**：可选看板适配器（罗盘 / 千川，需要登录态）。
@@ -116,7 +116,7 @@ src/
 约束：
 
 - **不用异步运行时。** 探测、ffmpeg、HTTP 都是 OS 线程。单二进制，调度可预期。
-- **录制器就是 ffmpeg。** `-c copy -t N` 在 macOS / Linux / Windows 行为一致。
+- **录制器就是 ffmpeg。** `-c copy -t N`，并打开 HTTP 重连（`-reconnect 1`）。断流写下一段文件，不拆掉整场。
 - **没有 ffmpeg 就 dry-run。** 写 `FLV\x01` 占位，笔记本上也能跑调度。
 - **采集按能力开门。** 看板地址在，会话不造假。
 

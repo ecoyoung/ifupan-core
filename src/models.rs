@@ -64,6 +64,9 @@ pub struct ClientConfig {
     pub hide_size: i64,
     pub live_notice: i64,
     pub online_number: i64,
+    pub max_concurrency: usize,
+    pub stagger_delay_ms: u64,
+    pub reconnect: bool,
 }
 
 impl Default for ClientConfig {
@@ -81,6 +84,9 @@ impl Default for ClientConfig {
             hide_size: 0,
             live_notice: 0,
             online_number: 1,
+            max_concurrency: 4,
+            stagger_delay_ms: 500,
+            reconnect: true,
         }
     }
 }
