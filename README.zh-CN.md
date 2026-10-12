@@ -58,7 +58,7 @@ flowchart LR
 2. **探测**：抖音走 webcast enter，其它平台读页面标记。
 3. **调度**：间隔 `detection_fre`（默认 10 秒），并发上限 `max_concurrency`（4），启动错峰 `stagger_delay_ms`（500）。开播则自动录。
 4. **拉流**：ffmpeg 吃 FLV/HLS，按 `limit_type=2` 的分钟数切片（默认 240）。
-5. **折叠**：实时事件写入 `danmu`。
+5. **折叠**：常驻 WSS 收实时事件写入 `danmu`（心跳、ack、退避重连）。
 6. **采集**：可选看板适配器（罗盘 / 千川，需要登录态）。
 7. **诊断**：停录后解 16 kHz 单声道 → ASR → chat completions。
 
@@ -102,7 +102,9 @@ src/
 ├── platforms.rs     URL / bean 路由
 ├── detector.rs      房间探测
 ├── recorder.rs      ffmpeg 切片，无 ffmpeg 时 dry-run
-├── barrage.rs       webcast method → 事件类型
+├── barrage.rs       事件映射 + BarrageHub
+├── barrage_ws.rs    常驻 WSS，心跳，退避重连
+├── webcast.rs       PushFrame / gzip / 弹幕礼物解码
 ├── collectors.rs    直播元数据 / 罗盘 / 千川
 ├── scheduler.rs     探测线程 + 自动录制
 ├── analysis.rs      解复用 + 方舟 chat completions
@@ -129,6 +131,7 @@ cargo run -- probe https://live.douyin.com/<web_rid>
 cargo run -- add  https://live.douyin.com/<web_rid>
 cargo run -- list
 cargo run -- serve --host 127.0.0.1 --port 5001
+cargo run -- barrage https://live.douyin.com/<web_rid>
 ```
 
 房间探测对 cookie 敏感。未登录的抖音 enter 经常返回非 JSON（`error: "bad json"`），URL 分类不受影响。拉流需要 `PATH` 里有 `ffmpeg`。
@@ -145,11 +148,11 @@ cargo run -- serve --host 127.0.0.1 --port 5001
 
 ## 状态
 
-测试覆盖：URL 代数、SQLite 名录、本地 REST、弹幕类型映射、机器码、路由分发。
+测试覆盖：URL 代数、SQLite 名录、本地 REST、弹幕类型映射、gzip PushFrame 往返、机器码、路由分发。
 
 ```
 cargo test
-# 7 passed
+# 11 passed
 ```
 
 ## 许可

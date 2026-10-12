@@ -190,6 +190,7 @@ pub struct LiveRoom {
     pub online: i64,
     pub cover: String,
     pub error: String,
+    pub wss_url: String,
 }
 
 impl Default for LiveRoom {
@@ -208,6 +209,7 @@ impl Default for LiveRoom {
             online: 0,
             cover: String::new(),
             error: String::new(),
+            wss_url: String::new(),
         }
     }
 }

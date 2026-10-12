@@ -36,6 +36,40 @@ fn http_get(url: &str) -> Result<(u16, String, String), String> {
     }
 }
 
+/// status, body, ttwid
+pub(crate) fn http_get_public(url: &str) -> Result<(u16, String, String), String> {
+    match agent().get(url).call() {
+        Ok(resp) => {
+            let status = resp.status();
+            let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
+            let body = resp.into_string().unwrap_or_default();
+            Ok((status, body.clone(), extract_ttwid(&set_cookie, &body)))
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
+            let body = resp.into_string().unwrap_or_default();
+            Ok((code, body.clone(), extract_ttwid(&set_cookie, &body)))
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn extract_ttwid(header: &str, body: &str) -> String {
+    for src in [header, body] {
+        if let Some(i) = src.find("ttwid=") {
+            let rest = &src[i + 6..];
+            let end = rest
+                .find(|c: char| c == ';' || c == '"' || c == '&' || c.is_whitespace())
+                .unwrap_or_else(|| rest.len().min(180));
+            let v = &rest[..end];
+            if v.len() > 8 {
+                return v.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
 pub fn detect(url: &str) -> LiveRoom {
     let parsed = match match_url(url) {
         Ok(p) => p,
@@ -173,13 +207,15 @@ fn detect_douyin(parsed: &ParsedLiveUrl) -> LiveRoom {
         room_id: room
             .get("id_str")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+            .map(|s| s.to_string())
+            .or_else(|| room.get("id").and_then(|v| v.as_i64()).map(|n| n.to_string()))
+            .unwrap_or_default(),
         stream_url: flv,
         hls_url: hls,
         online,
         cover: String::new(),
         error: String::new(),
+        wss_url: crate::webcast::find_wss(&payload).unwrap_or_default(),
     }
 }
 

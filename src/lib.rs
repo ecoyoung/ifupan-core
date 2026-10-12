@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod api;
 pub mod barrage;
+pub mod barrage_ws;
 pub mod collectors;
 pub mod crypto;
 pub mod db;
@@ -9,8 +10,10 @@ pub mod models;
 pub mod pipeline;
 pub mod platforms;
 pub mod pool;
+pub mod proto_wire;
 pub mod recorder;
 pub mod scheduler;
+pub mod webcast;
 
 pub use models::{Anchor, ClientConfig, LiveRoom, PlatformValue};
 pub use pipeline::Pipeline;
@@ -132,5 +135,35 @@ mod tests {
         assert!(flags.contains(&"-reconnect_streamed"));
         let off = crate::recorder::ffmpeg_input_flags(false);
         assert!(!off.contains(&"-reconnect"));
+    }
+
+    #[test]
+    fn webcast_gzip_chat_roundtrip() {
+        let buf = crate::webcast::encode_chat_frame("alice", "hello", true);
+        let (resp, events) = crate::webcast::events_from_frame(&buf, "vid", "batch");
+        assert!(resp.need_ack);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].nick_name, "alice");
+        assert_eq!(events[0].content, "hello");
+        assert_eq!(events[0].msg_type, 1);
+        assert_eq!(events[0].video_id, "vid");
+    }
+
+    #[test]
+    fn barrage_hub_start_stop() {
+        let hub = crate::barrage::BarrageHub::default();
+        hub.start(
+            crate::barrage_ws::BarrageStart {
+                anchor_id: 9,
+                room_id: String::new(),
+                wss_url: String::new(),
+                video_id: "v".into(),
+                batch: "b".into(),
+            },
+            |_| {},
+        );
+        assert!(hub.active().is_empty());
+        hub.stop(9);
+        hub.stop_all();
     }
 }

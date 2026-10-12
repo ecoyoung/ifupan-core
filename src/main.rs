@@ -30,6 +30,8 @@ enum Cmd {
         #[arg(long, default_value_t = 5001)]
         port: u16,
     },
+    /// 常驻弹幕 WSS（打印 JSON 行）
+    Barrage { url: String },
 }
 
 fn main() {
@@ -62,6 +64,33 @@ fn main() {
                 token: std::sync::Mutex::new(String::new()),
             });
             api::serve(&host, port, app).expect("serve");
+        }
+        Cmd::Barrage { url } => {
+            use ifupan_core::barrage::BarrageHub;
+            use ifupan_core::barrage_ws::BarrageStart;
+            use ifupan_core::detector::detect;
+            let room = detect(&url);
+            if room.room_id.is_empty() && room.wss_url.is_empty() {
+                eprintln!("no room_id/wss_url: {}", room.error);
+                std::process::exit(1);
+            }
+            let hub = BarrageHub::default();
+            hub.start(
+                BarrageStart {
+                    anchor_id: 0,
+                    room_id: room.room_id,
+                    wss_url: room.wss_url,
+                    video_id: "live".into(),
+                    batch: "cli".into(),
+                },
+                |ev| {
+                    println!("{}", serde_json::to_string(&ev).unwrap_or_default());
+                },
+            );
+            eprintln!("barrage connected, ctrl+c to stop");
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
         }
     }
 }

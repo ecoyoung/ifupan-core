@@ -58,7 +58,7 @@ Seven stages, one process:
 2. **Probe** the room (Douyin webcast enter; HTML markers elsewhere).
 3. **Schedule** on `detection_fre` (default 10s), bounded by `max_concurrency` (4) with `stagger_delay_ms` (500). Auto-record when the room is live.
 4. **Ingest** FLV/HLS with ffmpeg, sliced on `limit_type=2` minutes (default 240).
-5. **Fold** realtime events into `danmu`.
+5. **Fold** realtime events into `danmu` over a persistent WSS (heartbeat, ack, backoff reconnect).
 6. **Collect** optional dashboard adapters (Compass / Qianchuan — cookie-gated).
 7. **Diagnose** after stop: 16 kHz mono demux → ASR hook → chat completions.
 
@@ -102,7 +102,9 @@ src/
 ├── platforms.rs     URL / bean router
 ├── detector.rs      room probe
 ├── recorder.rs      ffmpeg segmenter, dry-run fallback
-├── barrage.rs       webcast method → event type
+├── barrage.rs       event map + BarrageHub
+├── barrage_ws.rs    persistent WSS, heartbeat, backoff
+├── webcast.rs       PushFrame / gzip / chat-gift decode
 ├── collectors.rs    live-meta / compass / qianchuan
 ├── scheduler.rs     detection thread + auto-record
 ├── analysis.rs      demux + Ark chat completions
@@ -129,6 +131,7 @@ cargo run -- probe https://live.douyin.com/<web_rid>
 cargo run -- add  https://live.douyin.com/<web_rid>
 cargo run -- list
 cargo run -- serve --host 127.0.0.1 --port 5001
+cargo run -- barrage https://live.douyin.com/<web_rid>
 ```
 
 Room enter is cookie-sensitive. Unauthenticated Douyin probes often return a non-JSON challenge (`error: "bad json"`); classification still succeeds. Ingest needs `ffmpeg` on `PATH`.
@@ -145,11 +148,11 @@ Room enter is cookie-sensitive. Unauthenticated Douyin probes often return a non
 
 ## Status
 
-Covered by tests: URL algebra, SQLite roster, local REST, danmaku type map, machine-code, REST dispatch.
+Covered by tests: URL algebra, SQLite roster, local REST, danmaku type map, gzip PushFrame roundtrip, machine-code, REST dispatch.
 
 ```
 cargo test
-# 7 passed
+# 11 passed
 ```
 
 ## License

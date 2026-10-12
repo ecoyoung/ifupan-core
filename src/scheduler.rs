@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use crate::barrage::BarrageHub;
+use crate::barrage_ws::BarrageStart;
 use crate::collectors::collect_all;
 use crate::db::Store;
 use crate::detector::detect;
@@ -15,6 +17,7 @@ pub struct Scheduler {
     store: Arc<Store>,
     cfg: ClientConfig,
     recorder: Arc<Recorder>,
+    hub: Arc<BarrageHub>,
     stop: Arc<AtomicBool>,
     pub detecting: Arc<AtomicBool>,
 }
@@ -23,6 +26,7 @@ impl Scheduler {
     pub fn new(store: Arc<Store>, cfg: ClientConfig) -> Self {
         Self {
             recorder: Arc::new(Recorder::new(cfg.clone())),
+            hub: Arc::new(BarrageHub::default()),
             store,
             cfg,
             stop: Arc::new(AtomicBool::new(false)),
@@ -103,6 +107,7 @@ impl Scheduler {
 
     pub fn stop_record(&self, anchor_id: i64) -> Result<serde_json::Value, String> {
         self.recorder.stop(anchor_id);
+        self.hub.stop(anchor_id);
         if let Ok(Some(mut a)) = self.store.get_anchor(anchor_id) {
             a.record_status = RecordStatus::Idle as i64;
             let _ = self.store.upsert_anchor(&mut a);
@@ -125,6 +130,7 @@ impl Scheduler {
                 let _ = self.store.upsert_anchor(&mut row);
             }
         }
+        attach_barrage(&self.hub, self.store.clone(), a, room, &video.video_id, &video.batch_number);
         Ok(serde_json::json!({
             "ok": true,
             "video_id": video.video_id,
@@ -139,6 +145,7 @@ impl Scheduler {
         self.stop.store(false, Ordering::SeqCst);
         let store = self.store.clone();
         let recorder = self.recorder.clone();
+        let hub = self.hub.clone();
         let stop = self.stop.clone();
         let detecting = self.detecting.clone();
         let interval = self.cfg.detection_fre.max(2) as u64;
@@ -150,6 +157,7 @@ impl Scheduler {
                 let stop2 = stop.clone();
                 let store2 = store.clone();
                 let recorder2 = recorder.clone();
+                let hub2 = hub.clone();
                 run_bounded(
                     anchors,
                     max_conc,
@@ -180,10 +188,19 @@ impl Scheduler {
                                 a.record_status = RecordStatus::Recording as i64;
                                 a.last_record_time = now_str();
                                 let _ = store2.upsert_anchor(&mut a);
+                                attach_barrage(
+                                    &hub2,
+                                    store2.clone(),
+                                    &a,
+                                    &room,
+                                    &video.video_id,
+                                    &video.batch_number,
+                                );
                             }
                         }
                         if !room.live && recorder2.is_recording(id) {
                             recorder2.stop(id);
+                            hub2.stop(id);
                             a.record_status = RecordStatus::Idle as i64;
                             let _ = store2.upsert_anchor(&mut a);
                         }
@@ -200,6 +217,7 @@ impl Scheduler {
 
     pub fn stop_detection(&self) {
         self.stop.store(true, Ordering::SeqCst);
+        self.hub.stop_all();
         if let Ok(list) = self.store.list_anchors() {
             for a in list {
                 if let Some(id) = a.id {
@@ -213,12 +231,52 @@ impl Scheduler {
         serde_json::json!({
             "detecting": self.detecting.load(Ordering::SeqCst),
             "recording": self.recorder.recording_ids(),
+            "barrage": self.hub.active(),
             "max_concurrency": self.cfg.max_concurrency,
             "stagger_delay_ms": self.cfg.stagger_delay_ms,
             "reconnect": self.cfg.reconnect,
             "detection_fre": self.cfg.detection_fre,
         })
     }
+}
+
+fn attach_barrage(
+    hub: &BarrageHub,
+    store: Arc<Store>,
+    a: &Anchor,
+    room: &LiveRoom,
+    video_id: &str,
+    batch: &str,
+) {
+    if a.is_barrage_monitoring == 0 {
+        return;
+    }
+    let Some(id) = a.id else { return };
+    if room.room_id.is_empty() && !room.wss_url.starts_with("wss://") {
+        return;
+    }
+    hub.start(
+        BarrageStart {
+            anchor_id: id,
+            room_id: room.room_id.clone(),
+            wss_url: room.wss_url.clone(),
+            video_id: video_id.to_string(),
+            batch: batch.to_string(),
+        },
+        move |ev| {
+            let payload = serde_json::to_string(&ev).unwrap_or_default();
+            let _ = store.insert_danmu(
+                &ev.video_id,
+                &ev.batch_number,
+                ev.msg_type,
+                &ev.content,
+                &ev.nick_name,
+                &ev.user_id,
+                &ev.event_time,
+                &payload,
+            );
+        },
+    );
 }
 
 fn first_url(a: &Anchor) -> String {
