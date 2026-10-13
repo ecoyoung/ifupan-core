@@ -144,14 +144,14 @@ cargo run -- session --set 'ttwid=...; msToken=...'
 
 `GET /api/config/session` 只回 keys / 前缀，不回完整密钥。没有 cookie 时 URL 分类仍可用，enter 可能是 `error: "bad json"`。拉流需要 `PATH` 里有 `ffmpeg`。
 
-弹幕 WSS 需要**签过名的 URL**。签名是另一个 HTTP 服务，不是爱复盘账号 token。用环境变量指向它（密钥不要提交仓库）：
+弹幕 WSS **本地签**：MD5 stub → 原版 `fp.data` 的 `frontierSign`（Node）。把安装包里的 `fp/fp.data` 拷到 `data/fp.data`（已 gitignore）。`PATH` 里要有 `node`。
 
 ```bash
-export IFUPAN_SIGN_URL='https://example.com/Douyin/Douyin/SignWss'
-export IFUPAN_SIGN_KEY='your-sign-apikey'
-# 或同样两行写进 data/sign.env（已 gitignore）
+cp /path/to/fp.data data/fp.data
 cargo run -- barrage https://live.douyin.com/<web_rid>
 ```
+
+`IFUPAN_SIGN_URL` / `IFUPAN_SIGN_KEY` 只在没有 `fp.data` 时才当备用。密钥不要提交。
 
 设置 `ARK_API_KEY` 后走火山方舟（`doubao-pro-32k`）。没有 key 时诊断返回结构化占位。
 

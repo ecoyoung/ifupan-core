@@ -180,6 +180,11 @@ mod tests {
         let red = crate::sign::redact_wss(&u);
         assert!(!red.contains("abc"));
         assert!(crate::sign::user_unique_id().len() >= 19);
+        let params = crate::sign::stub_params("7695952605281110819", "2477807613760054152");
+        assert_eq!(
+            crate::sign::x_ms_stub(&params),
+            "92b54bea64f3c5a3c309d1520cd5e92d"
+        );
     }
 
     #[test]
