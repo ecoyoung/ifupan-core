@@ -229,6 +229,21 @@ mod tests {
         assert_eq!(p.username, "abc");
         let job = crate::analysis::AnalysisPipeline::default().run("/no/such.flv", "t");
         assert!(job.report.contains("stats"));
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("t.sqlite");
+        let pipe = Pipeline::new(db.to_str().unwrap(), dir.path().to_str().unwrap()).unwrap();
+        pipe.store
+            .insert_collect(1, "juliang", false, "{}", "no compass cookie")
+            .unwrap();
+        let rows = pipe.store.latest_collects(1).unwrap();
+        assert_eq!(rows.len(), 1);
+        pipe.store
+            .insert_danmu("vid1", "b", 1, "hi", "n", "1", "t", "{\"method\":\"WebcastChatMessage\",\"content\":\"hi\"}")
+            .unwrap();
+        let fake = dir.path().join("x.flv");
+        let _ = std::fs::write(&fake, b"FLV");
+        let job = crate::analysis::finalize_recording(pipe.store.as_ref(), "vid1", fake.to_str().unwrap(), "t");
+        assert!(job.report.contains("chat"));
     }
 
     #[test]

@@ -78,7 +78,7 @@ impl Default for ClientConfig {
             live_source: 0,
             limit_type: 2,
             limit_value: "240".into(),
-            is_record: 0,
+            is_record: 1,
             is_subsection: 0,
             hide_duration: 0,
             hide_size: 0,

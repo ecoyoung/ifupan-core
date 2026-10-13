@@ -12,6 +12,25 @@ pub struct AnalysisPipeline {
     pub model: String,
 }
 
+pub fn finalize_recording(store: &crate::db::Store, video_id: &str, path: &str, title: &str) -> AnalysisJob {
+    let payloads = store.list_danmu_payloads(video_id).unwrap_or_default();
+    let events: Vec<DanmuEvent> = payloads
+        .iter()
+        .filter_map(|p| serde_json::from_str::<serde_json::Value>(p).ok())
+        .map(|v| crate::barrage::ingest(&v, video_id, "replay"))
+        .collect();
+    let sidecar = Path::new(path).with_extension("danmu.jsonl");
+    let _ = std::fs::write(
+        &sidecar,
+        payloads.into_iter().map(|p| p + "\n").collect::<String>(),
+    );
+    let job = AnalysisPipeline::default().run_with_danmu(path, title, &events);
+    let report_path = Path::new(path).with_extension("report.json");
+    let _ = std::fs::write(&report_path, &job.report);
+    let _ = store.finish_video(video_id, job.status as i64, &job.report.chars().take(4000).collect::<String>());
+    job
+}
+
 impl Default for AnalysisPipeline {
     fn default() -> Self {
         Self {

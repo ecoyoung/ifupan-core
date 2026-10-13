@@ -133,6 +133,8 @@ cargo run -- add  https://live.douyin.com/<web_rid>
 cargo run -- list
 cargo run -- serve --host 127.0.0.1 --port 5001
 cargo run -- barrage https://live.douyin.com/<web_rid>
+cargo run -- watch https://live.douyin.com/<web_rid>
+cargo run -- collect https://live.douyin.com/<web_rid>
 cargo run -- analyze recordings/xxx.flv --title '场次'
 cargo run -- session --platform compass --set '<cookie>'
 ```

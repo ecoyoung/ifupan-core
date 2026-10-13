@@ -238,6 +238,9 @@ fn text_field(fields: &[(u32, crate::proto_wire::Wire)], n: u32) -> String {
     if t.is_empty() || t.chars().filter(|c| *c == '\u{fffd}').count() > 2 {
         return String::new();
     }
+    if t.chars().any(|c| c.is_control()) {
+        return String::new();
+    }
     t.to_string()
 }
 

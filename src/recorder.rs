@@ -13,10 +13,13 @@ pub struct RecordSession {
     pub child: Mutex<Option<Child>>,
 }
 
+pub type FinishHook = Arc<dyn Fn(i64, String, PathBuf) + Send + Sync>;
+
 pub struct Recorder {
     pub cfg: ClientConfig,
     sessions: Arc<Mutex<HashMap<i64, Arc<RecordSession>>>>,
     ffmpeg: Option<PathBuf>,
+    on_finish: Arc<Mutex<Option<FinishHook>>>,
 }
 
 impl Recorder {
@@ -25,7 +28,12 @@ impl Recorder {
             ffmpeg: which("ffmpeg"),
             cfg,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            on_finish: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn set_on_finish(&self, hook: FinishHook) {
+        *self.on_finish.lock().unwrap() = Some(hook);
     }
 
     pub fn is_recording(&self, anchor_id: i64) -> bool {
@@ -92,9 +100,15 @@ impl Recorder {
         let stream = stream_url.to_string();
         let reconnect = self.cfg.reconnect;
         let sessions = self.sessions.clone();
+        let hook = self.on_finish.lock().unwrap().clone();
+        let vid = video_id.clone();
+        let out_cb = out.clone();
         thread::spawn(move || {
             run_record(ffmpeg, stream, out, slice_sec, reconnect, session);
             sessions.lock().unwrap().remove(&aid);
+            if let Some(h) = hook {
+                h(aid, vid, out_cb);
+            }
         });
         Ok(video)
     }

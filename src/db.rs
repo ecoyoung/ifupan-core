@@ -83,6 +83,15 @@ CREATE TABLE IF NOT EXISTS web_session (
   cookie TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS collect_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  anchor_id INTEGER,
+  platform_id TEXT,
+  success INTEGER,
+  raw TEXT,
+  error TEXT,
+  collected_at TEXT
+);
 "#;
 
 pub struct Store {
@@ -387,6 +396,77 @@ impl Store {
             params![video_id, batch, msg_type, content, nick, user_id, event_time, payload],
         )?;
         Ok(())
+    }
+
+    pub fn finish_video(&self, video_id: &str, analysis_status: i64, error_reason: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE anchor_video SET is_recording=0, end_time=?, analysis_status=?, error_reason=?
+             WHERE video_id=?",
+            params![crate::models::now_str(), analysis_status, error_reason, video_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn video_path(&self, video_id: &str) -> rusqlite::Result<Option<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT storage_path, live_title FROM anchor_video WHERE video_id=? LIMIT 1",
+            [video_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())),
+        )
+        .optional()
+    }
+
+    pub fn list_danmu_payloads(&self, video_id: &str) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM danmu WHERE video_id=? ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map([video_id], |r| r.get::<_, Option<String>>(0))?;
+        Ok(rows.filter_map(|r| r.ok().flatten()).collect())
+    }
+
+    pub fn insert_collect(
+        &self,
+        anchor_id: i64,
+        platform_id: &str,
+        success: bool,
+        raw: &str,
+        error: &str,
+    ) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO collect_log (anchor_id, platform_id, success, raw, error, collected_at)
+             VALUES (?,?,?,?,?,?)",
+            params![
+                anchor_id,
+                platform_id,
+                if success { 1 } else { 0 },
+                raw,
+                error,
+                crate::models::now_str()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn latest_collects(&self, anchor_id: i64) -> rusqlite::Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT platform_id, success, raw, error, collected_at FROM collect_log
+             WHERE anchor_id=? ORDER BY id DESC LIMIT 30",
+        )?;
+        let rows = stmt.query_map([anchor_id], |r| {
+            Ok(serde_json::json!({
+                "platform_id": r.get::<_, String>(0)?,
+                "success": r.get::<_, i64>(1)?,
+                "raw": serde_json::from_str::<serde_json::Value>(&r.get::<_, String>(2)?).unwrap_or(serde_json::Value::Null),
+                "error": r.get::<_, String>(3)?,
+                "collected_at": r.get::<_, String>(4)?,
+            }))
+        })?;
+        rows.collect()
     }
 
     pub fn get_web_session(&self, platform: &str) -> rusqlite::Result<String> {

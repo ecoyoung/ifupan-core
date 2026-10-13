@@ -47,6 +47,10 @@ enum Cmd {
         #[arg(long, default_value = "")]
         title: String,
     },
+    /// 探测 + 巨量/千川采集
+    Collect { url: String },
+    /// 添加主播并启动调度（自动录制 + 弹幕 + 下播复盘）
+    Watch { url: String },
 }
 
 fn main() {
@@ -98,6 +102,32 @@ fn main() {
         Cmd::Analyze { path, title } => {
             let job = ifupan_core::analysis::AnalysisPipeline::default().run(&path, &title);
             println!("{}", serde_json::to_string_pretty(&job).unwrap());
+        }
+        Cmd::Collect { url } => {
+            let room = ifupan_core::detector::detect(&url);
+            let mut a = ifupan_core::models::Anchor {
+                source_url: url.clone(),
+                live_url: url,
+                sec_uid: room.sec_uid.clone(),
+                web_rid: room.web_rid.clone(),
+                id: Some(0),
+                ..ifupan_core::models::Anchor::default()
+            };
+            a.anchor_name = room.nickname.clone();
+            let rows = ifupan_core::collectors::collect_all(&a, Some(&room));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({"room": room, "collect": rows})).unwrap()
+            );
+        }
+        Cmd::Watch { url } => {
+            let a = pipe.add(&url).expect("add");
+            println!("{}", serde_json::to_string_pretty(&a).unwrap());
+            pipe.scheduler.start_detection();
+            eprintln!("watching, ctrl+c to stop");
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
         }
         Cmd::Barrage { url } => {
             use ifupan_core::barrage::BarrageHub;

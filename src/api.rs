@@ -43,7 +43,11 @@ impl App {
                 if raw.is_empty() {
                     return err(1, "cookie required");
                 }
-                crate::session::set_raw(raw);
+                let platform = body
+                    .get("platform")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("douyin");
+                crate::session::set_named(platform, raw);
                 ok(crate::session::status())
             }
             ("GET", "/api/config/session/refresh") => match crate::session::refresh() {
@@ -114,6 +118,15 @@ impl App {
                 }
             }
             ("POST", "/api/anchorvideo/CreateAnalysis") => {
+                if let Some(vid) = body.get("video_id").and_then(|v| v.as_str()) {
+                    match self.store.video_path(vid) {
+                        Ok(Some((path, title))) => {
+                            let job = crate::analysis::finalize_recording(&self.store, vid, &path, &title);
+                            return ok(json!(job));
+                        }
+                        _ => return err(1, "video not found"),
+                    }
+                }
                 let path = body.get("storage_path").and_then(|v| v.as_str()).unwrap_or("");
                 if path.is_empty() {
                     return err(1, "storage_path required");
@@ -121,6 +134,26 @@ impl App {
                 let title = body.get("title").and_then(|v| v.as_str()).unwrap_or("");
                 let job = AnalysisPipeline::default().run(path, title);
                 ok(json!(job))
+            }
+            ("GET", "/api/collect") => {
+                let id = query.get("anchor_id").and_then(|s| s.parse().ok()).unwrap_or(0);
+                match self.store.latest_collects(id) {
+                    Ok(v) => ok(json!(v)),
+                    Err(e) => err(1, &e.to_string()),
+                }
+            }
+            ("GET", "/api/danmu") => {
+                let vid = query.get("video_id").cloned().unwrap_or_default();
+                match self.store.list_danmu_payloads(&vid) {
+                    Ok(v) => {
+                        let arr: Vec<Value> = v
+                            .into_iter()
+                            .filter_map(|s| serde_json::from_str(&s).ok())
+                            .collect();
+                        ok(json!(arr))
+                    }
+                    Err(e) => err(1, &e.to_string()),
+                }
             }
             _ => json!({"code": -9, "msg": "资源不存在", "data": null}),
         }

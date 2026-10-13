@@ -24,8 +24,24 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new(store: Arc<Store>, cfg: ClientConfig) -> Self {
+        let recorder = Arc::new(Recorder::new(cfg.clone()));
+        let store_hook = store.clone();
+        recorder.set_on_finish(Arc::new(move |_aid, video_id, path| {
+            let title = store_hook
+                .video_path(&video_id)
+                .ok()
+                .flatten()
+                .map(|(_, t)| t)
+                .unwrap_or_default();
+            let _ = crate::analysis::finalize_recording(
+                &store_hook,
+                &video_id,
+                &path.to_string_lossy(),
+                &title,
+            );
+        }));
         Self {
-            recorder: Arc::new(Recorder::new(cfg.clone())),
+            recorder,
             hub: Arc::new(BarrageHub::default()),
             store,
             cfg,
@@ -131,6 +147,7 @@ impl Scheduler {
             }
         }
         attach_barrage(&self.hub, self.store.clone(), a, room, &video.video_id, &video.batch_number);
+        persist_collects(&self.store, a, room);
         Ok(serde_json::json!({
             "ok": true,
             "video_id": video.video_id,
@@ -171,7 +188,7 @@ impl Scheduler {
                         let room = detect(&url);
                         apply_room(&mut a, &room);
                         let _ = store2.upsert_anchor(&mut a);
-                        let _ = collect_all(&a, Some(&room));
+                        persist_collects(&store2, &a, &room);
                         let Some(id) = a.id else { return };
                         if room.live
                             && a.is_auto_record != 0
@@ -277,6 +294,14 @@ fn attach_barrage(
             );
         },
     );
+}
+
+fn persist_collects(store: &Store, a: &Anchor, room: &LiveRoom) {
+    let Some(id) = a.id else { return };
+    for c in collect_all(a, Some(room)) {
+        let raw = serde_json::to_string(&c.raw).unwrap_or_default();
+        let _ = store.insert_collect(id, &c.platform_id, c.success, &raw, &c.error);
+    }
 }
 
 fn first_url(a: &Anchor) -> String {
