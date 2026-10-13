@@ -144,6 +144,15 @@ cargo run -- session --set 'ttwid=...; msToken=...'
 
 `GET /api/config/session` shows keys only (prefix, not the secret). Missing cookies still classify the URL; enter may return `error: "bad json"`. Ingest needs `ffmpeg` on `PATH`.
 
+Barrage WSS needs a **signed** URL. That signer is a separate HTTP service, not the ifupan-core login token. Point the process at it with env vars (never commit the key):
+
+```bash
+export IFUPAN_SIGN_URL='https://example.com/Douyin/Douyin/SignWss'
+export IFUPAN_SIGN_KEY='your-sign-apikey'
+# or put the same two lines in data/sign.env (gitignored)
+cargo run -- barrage https://live.douyin.com/<web_rid>
+```
+
 `ARK_API_KEY` enables Volcengine Ark completions (`doubao-pro-32k`). Without it, diagnosis returns a structured placeholder.
 
 ## Design notes

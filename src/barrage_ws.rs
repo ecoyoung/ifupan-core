@@ -38,10 +38,21 @@ pub fn run_loop(req: BarrageStart, stop: Arc<AtomicBool>, sink: Arc<dyn Fn(Danmu
         let cookie = crate::session::header();
         let url = if req.wss_url.starts_with("wss://") {
             req.wss_url.clone()
+        } else if crate::sign::configured() {
+            match crate::sign::sign_wss(&req.room_id) {
+                Ok(u) => {
+                    eprintln!("barrage signed {}", crate::sign::redact_wss(&u));
+                    u
+                }
+                Err(e) => {
+                    eprintln!("barrage sign err: {e}");
+                    build_wss(HOSTS[host_i % HOSTS.len()], &req.room_id)
+                }
+            }
         } else {
             build_wss(HOSTS[host_i % HOSTS.len()], &req.room_id)
         };
-        eprintln!("barrage connecting {url}");
+        eprintln!("barrage connecting {}", crate::sign::redact_wss(&url));
         match open_socket(&url, &cookie) {
             Ok(mut ws) => {
                 eprintln!("barrage socket ok");
@@ -52,7 +63,6 @@ pub fn run_loop(req: BarrageStart, stop: Arc<AtomicBool>, sink: Arc<dyn Fn(Danmu
                     match ws.read() {
                         Ok(Message::Binary(buf)) => {
                             idle_pings = 0;
-                            eprintln!("barrage frame {} bytes", buf.len());
                             let (resp, events) = events_from_bytes(&buf, &req.video_id, &req.batch);
                             for ev in events {
                                 sink(ev);

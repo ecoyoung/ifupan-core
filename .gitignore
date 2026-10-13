@@ -5,3 +5,6 @@ recordings/
 .DS_Store
 *.sqlite
 *.sqlite-journal
+.env
+sign.env
+data/sign.env

@@ -14,6 +14,7 @@ pub mod proto_wire;
 pub mod recorder;
 pub mod scheduler;
 pub mod session;
+pub mod sign;
 pub mod webcast;
 
 pub use models::{Anchor, ClientConfig, LiveRoom, PlatformValue};
@@ -166,6 +167,19 @@ mod tests {
         let peak = crate::pool::peak_inflight(8, 3, 30);
         assert!(peak <= 3, "peak={peak}");
         assert!(peak >= 1);
+    }
+
+    #[test]
+    fn sign_parse_wss_url() {
+        let v = json!({
+            "Code": 0,
+            "Data": {"WssUrl": "wss://webcast5-ws-web-lf.douyin.com/webcast/im/push/v2/?room_id=1&signature=abc"}
+        });
+        let u = crate::sign::parse_wss_url(&v).unwrap();
+        assert!(u.contains("signature=abc"));
+        let red = crate::sign::redact_wss(&u);
+        assert!(!red.contains("abc"));
+        assert!(crate::sign::user_unique_id().len() >= 19);
     }
 
     #[test]
