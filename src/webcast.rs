@@ -93,18 +93,30 @@ pub fn unzip_payload(encoding: &str, payload: &[u8]) -> Vec<u8> {
 }
 
 pub fn events_from_frame(buf: &[u8], video_id: &str, batch: &str) -> (ImResponse, Vec<DanmuEvent>) {
+    events_from_bytes(buf, video_id, batch)
+}
+
+pub fn events_from_bytes(buf: &[u8], video_id: &str, batch: &str) -> (ImResponse, Vec<DanmuEvent>) {
     let frame = decode_push_frame(buf);
-    if frame.payload_type == "ack" || frame.payload_type == "hb" || frame.payload.is_empty() {
-        return (ImResponse::default(), Vec::new());
-    }
-    let inner = unzip_payload(&frame.payload_encoding, &frame.payload);
-    let resp = decode_im_response(&inner);
-    let mut events = Vec::new();
-    for m in &resp.messages {
-        if let Some(ev) = message_to_event(m, video_id, batch) {
-            events.push(ev);
+    if !frame.payload.is_empty() && frame.payload_type != "ack" && frame.payload_type != "hb" {
+        let inner = unzip_payload(&frame.payload_encoding, &frame.payload);
+        let resp = decode_im_response(&inner);
+        let events: Vec<DanmuEvent> = resp
+            .messages
+            .iter()
+            .filter_map(|m| message_to_event(m, video_id, batch))
+            .collect();
+        if !events.is_empty() || !resp.cursor.is_empty() || !resp.messages.is_empty() {
+            return (resp, events);
         }
     }
+    let inner = unzip_payload("", buf);
+    let resp = decode_im_response(&inner);
+    let events: Vec<DanmuEvent> = resp
+        .messages
+        .iter()
+        .filter_map(|m| message_to_event(m, video_id, batch))
+        .collect();
     (resp, events)
 }
 

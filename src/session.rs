@@ -190,8 +190,12 @@ pub fn refresh() -> Result<CookieJar, String> {
         Err(e) => return Err(e.to_string()),
     };
     let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
+    let ms = resp.header("x-ms-token").unwrap_or("").to_string();
     let body = resp.into_string().unwrap_or_default();
     merge_raw(&set_cookie);
+    if !ms.is_empty() {
+        merge_raw(&format!("msToken={ms}"));
+    }
     if let Some(i) = body.find("ttwid=") {
         let slice = &body[i..i.saturating_add(200).min(body.len())];
         merge_raw(slice);

@@ -36,18 +36,28 @@ fn http_get(url: &str) -> Result<(u16, String, String), String> {
         Ok(resp) => {
             let status = resp.status();
             let final_url = resp.get_url().to_string();
-            let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
-            crate::session::merge_raw(&set_cookie);
+            absorb_session_headers(&resp);
             let body = resp.into_string().unwrap_or_default();
             Ok((status, body, final_url))
         }
         Err(ureq::Error::Status(code, resp)) => {
-            let set_cookie = resp.header("set-cookie").unwrap_or("").to_string();
-            crate::session::merge_raw(&set_cookie);
+            absorb_session_headers(&resp);
             let body = resp.into_string().unwrap_or_default();
             Ok((code, body, url.to_string()))
         }
         Err(e) => Err(e.to_string()),
+    }
+}
+
+fn absorb_session_headers(resp: &ureq::Response) {
+    if let Some(c) = resp.header("set-cookie") {
+        crate::session::merge_raw(c);
+    }
+    if let Some(t) = resp
+        .header("x-ms-token")
+        .or_else(|| resp.header("X-Ms-Token"))
+    {
+        crate::session::merge_raw(&format!("msToken={t}"));
     }
 }
 
