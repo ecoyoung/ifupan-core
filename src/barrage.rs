@@ -40,6 +40,13 @@ pub fn ingest(raw: &Value, video_id: &str, batch: &str) -> DanmuEvent {
             .unwrap_or_default(),
         batch_number: batch.into(),
         video_id: video_id.into(),
+        method: method.to_string(),
+        sec_uid: user
+            .get("secUid")
+            .or_else(|| user.get("sec_uid"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
     }
 }
 

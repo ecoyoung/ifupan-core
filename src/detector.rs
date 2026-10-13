@@ -28,6 +28,18 @@ fn http_get(url: &str) -> Result<(u16, String, String), String> {
         req = req
             .set("Referer", "https://live.douyin.com/")
             .set("Origin", "https://live.douyin.com");
+    } else if url.contains("kuaishou.com") {
+        req = req
+            .set("Referer", "https://live.kuaishou.com/")
+            .set("Origin", "https://live.kuaishou.com");
+    } else if url.contains("tiktok.com") {
+        req = req
+            .set("Referer", "https://www.tiktok.com/")
+            .set("Origin", "https://www.tiktok.com");
+    } else if url.contains("xiaohongshu.com") || url.contains("redelight.cn") {
+        req = req
+            .set("Referer", "https://www.xiaohongshu.com/")
+            .set("Origin", "https://www.xiaohongshu.com");
     }
     if !cookie.is_empty() {
         req = req.set("Cookie", &cookie);
@@ -78,8 +90,8 @@ pub fn detect_parsed(parsed: &ParsedLiveUrl) -> LiveRoom {
     match parsed.spec.platform_value {
         x if x == PlatformValue::Douyin as i32 => detect_douyin(parsed),
         x if x == PlatformValue::Kuaishou as i32 => detect_kuaishou(parsed),
-        x if x == PlatformValue::Tiktok as i32 => detect_generic(parsed, "LiveRoom"),
-        x if x == PlatformValue::Xiaohongshu as i32 => detect_generic(parsed, "live"),
+        x if x == PlatformValue::Tiktok as i32 => detect_tiktok(parsed),
+        x if x == PlatformValue::Xiaohongshu as i32 => detect_xiaohongshu(parsed),
         _ => LiveRoom {
             error: "unknown platform".into(),
             ..LiveRoom::default()
@@ -220,49 +232,202 @@ fn finish_douyin(parsed: &ParsedLiveUrl, web_rid: String, payload: Value) -> Liv
         cover: String::new(),
         error: String::new(),
         wss_url: crate::webcast::find_wss(&payload).unwrap_or_default(),
+        qualities: flv_map,
     }
 }
 
 fn detect_kuaishou(parsed: &ParsedLiveUrl) -> LiveRoom {
-    match http_get(&parsed.source_url) {
-        Ok((code, body, _)) => LiveRoom {
-            success: code == 200,
-            live: body.contains("\"living\":true") || body.contains("liveStreamId"),
-            nickname: String::new(),
-            web_rid: parsed.username.clone(),
-            error: if code == 200 {
-                String::new()
-            } else {
-                format!("http {code}")
-            },
-            ..LiveRoom::default()
-        },
-        Err(e) => LiveRoom {
-            error: e,
-            web_rid: parsed.username.clone(),
-            ..LiveRoom::default()
-        },
+    let user = parsed.username.clone();
+    let api = format!(
+        "https://live.kuaishou.com/live_api/liveroom/livedetail?principalId={user}"
+    );
+    let mut room = LiveRoom {
+        web_rid: user.clone(),
+        nickname: user.clone(),
+        ..LiveRoom::default()
+    };
+    if let Ok((code, body, _)) = http_get(&api) {
+        if code == 200 {
+            if let Ok(v) = serde_json::from_str::<Value>(&body) {
+                fill_from_json(&mut room, &v);
+            }
+        }
+    }
+    if room.stream_url.is_empty() {
+        if let Ok((code, body, _)) = http_get(&parsed.source_url) {
+            room.success = code == 200;
+            fill_from_html(&mut room, &body);
+        }
+    } else {
+        room.success = true;
+    }
+    room.live = room.live || !room.stream_url.is_empty() || !room.hls_url.is_empty();
+    room
+}
+
+fn detect_tiktok(parsed: &ParsedLiveUrl) -> LiveRoom {
+    let user = parsed.username.clone();
+    let api = format!(
+        "https://webcast.tiktok.com/webcast/room/web/enter/?aid=1988&app_name=tiktok_web&live_id=12&device_platform=web&language=en-US&enter_from=web_live&cookie_enabled=true&screen_width=1920&screen_height=1080&unique_id={user}&uniqueId={user}"
+    );
+    let mut room = LiveRoom {
+        web_rid: user.clone(),
+        nickname: user.clone(),
+        ..LiveRoom::default()
+    };
+    if let Ok((code, body, _)) = http_get(&api) {
+        if code == 200 {
+            if let Ok(v) = serde_json::from_str::<Value>(&body) {
+                fill_from_json(&mut room, &v);
+            }
+        }
+    }
+    if room.stream_url.is_empty() {
+        let page = format!("https://www.tiktok.com/@{user}/live");
+        if let Ok((code, body, _)) = http_get(&page) {
+            room.success = code == 200;
+            fill_from_html(&mut room, &body);
+        }
+    } else {
+        room.success = true;
+    }
+    room.live = room.live || !room.stream_url.is_empty() || !room.hls_url.is_empty();
+    room
+}
+
+fn detect_xiaohongshu(parsed: &ParsedLiveUrl) -> LiveRoom {
+    let id = if parsed.username.is_empty() {
+        parsed.source_url.clone()
+    } else {
+        parsed.username.clone()
+    };
+    let mut room = LiveRoom {
+        web_rid: id.clone(),
+        ..LiveRoom::default()
+    };
+    if let Ok((code, body, _)) = http_get(&parsed.source_url) {
+        room.success = code == 200;
+        fill_from_html(&mut room, &body);
+        if let Ok(v) = serde_json::from_str::<Value>(&body) {
+            fill_from_json(&mut room, &v);
+        }
+    }
+    room.live = room.live || !room.stream_url.is_empty() || !room.hls_url.is_empty();
+    room
+}
+
+fn fill_from_json(room: &mut LiveRoom, v: &Value) {
+    if let Some(s) = first_str(v, &["nickname", "userName", "anchorName", "name"]) {
+        if room.nickname.is_empty() {
+            room.nickname = s;
+        }
+    }
+    if let Some(s) = first_str(v, &["title", "liveTitle", "caption"]) {
+        room.title = s;
+    }
+    if let Some(s) = first_str(v, &["roomId", "room_id", "liveStreamId", "liveId"]) {
+        room.room_id = s;
+    }
+    if let Some(n) = first_i64(v, &["userCount", "user_count", "onlineCount", "watchingCount"]) {
+        room.online = n;
+    }
+    let (flv, hls) = media_from_value(v);
+    if room.stream_url.is_empty() {
+        room.stream_url = flv;
+    }
+    if room.hls_url.is_empty() {
+        room.hls_url = hls;
+    }
+    if room.wss_url.is_empty() {
+        room.wss_url = crate::webcast::find_wss(v).unwrap_or_default();
+    }
+    if v.to_string().contains("\"living\":true") || v.to_string().contains("\"status\":2") {
+        room.live = true;
     }
 }
 
-fn detect_generic(parsed: &ParsedLiveUrl, marker: &str) -> LiveRoom {
-    match http_get(&parsed.source_url) {
-        Ok((code, body, _)) => LiveRoom {
-            success: code == 200,
-            live: body.contains(marker),
-            nickname: parsed.username.clone(),
-            web_rid: parsed.username.clone(),
-            error: if code == 200 {
-                String::new()
-            } else {
-                format!("http {code}")
-            },
-            ..LiveRoom::default()
-        },
-        Err(e) => LiveRoom {
-            error: e,
-            web_rid: parsed.username.clone(),
-            ..LiveRoom::default()
-        },
+fn fill_from_html(room: &mut LiveRoom, body: &str) {
+    let (flv, hls) = media_from_html(body);
+    if room.stream_url.is_empty() {
+        room.stream_url = flv;
+    }
+    if room.hls_url.is_empty() {
+        room.hls_url = hls;
+    }
+    if body.contains("\"living\":true") || body.contains("liveStreamId") || body.contains("PlayUrl") {
+        room.live = true;
+    }
+    if let Some(i) = body.find("\"nickname\":\"") {
+        let s = &body[i + 12..];
+        room.nickname = s.split('"').next().unwrap_or("").to_string();
+    }
+}
+
+fn media_from_html(body: &str) -> (String, String) {
+    let mut flv = String::new();
+    let mut hls = String::new();
+    for part in body.split('"') {
+        if part.starts_with("http") && part.contains(".flv") && flv.is_empty() {
+            flv = part.replace("\\u002F", "/").replace("\\/", "/");
+        }
+        if part.starts_with("http") && (part.contains(".m3u8") || part.contains("hls")) && hls.is_empty() {
+            hls = part.replace("\\u002F", "/").replace("\\/", "/");
+        }
+    }
+    (flv, hls)
+}
+
+fn media_from_value(v: &Value) -> (String, String) {
+    let mut flv = String::new();
+    let mut hls = String::new();
+    walk_media(v, &mut flv, &mut hls);
+    (flv, hls)
+}
+
+fn walk_media(v: &Value, flv: &mut String, hls: &mut String) {
+    match v {
+        Value::String(s) => {
+            if flv.is_empty() && s.contains(".flv") {
+                *flv = s.clone();
+            }
+            if hls.is_empty() && (s.contains(".m3u8") || s.contains("hls")) && s.starts_with("http") {
+                *hls = s.clone();
+            }
+        }
+        Value::Array(a) => a.iter().for_each(|x| walk_media(x, flv, hls)),
+        Value::Object(m) => m.values().for_each(|x| walk_media(x, flv, hls)),
+        _ => {}
+    }
+}
+
+fn first_str(v: &Value, keys: &[&str]) -> Option<String> {
+    match v {
+        Value::Object(m) => {
+            for k in keys {
+                if let Some(s) = m.get(*k).and_then(|x| x.as_str()) {
+                    if !s.is_empty() {
+                        return Some(s.to_string());
+                    }
+                }
+            }
+            m.values().find_map(|x| first_str(x, keys))
+        }
+        Value::Array(a) => a.iter().find_map(|x| first_str(x, keys)),
+        _ => None,
+    }
+}
+
+fn first_i64(v: &Value, keys: &[&str]) -> Option<i64> {
+    match v {
+        Value::Object(m) => {
+            for k in keys {
+                if let Some(n) = m.get(*k).and_then(|x| x.as_i64()) {
+                    return Some(n);
+                }
+            }
+            m.values().find_map(|x| first_i64(x, keys))
+        }
+        Value::Array(a) => a.iter().find_map(|x| first_i64(x, keys)),
+        _ => None,
     }
 }

@@ -203,6 +203,32 @@ mod tests {
         assert_eq!(events[0].content, "hello");
         assert_eq!(events[0].msg_type, 1);
         assert_eq!(events[0].video_id, "vid");
+        assert_eq!(events[0].method, "WebcastChatMessage");
+        let gift = crate::webcast::encode_gift_frame("bob", "rose", 3, false);
+        let (_, ge) = crate::webcast::events_from_frame(&gift, "vid", "batch");
+        assert_eq!(ge.len(), 1);
+        assert_eq!(ge[0].msg_type, 5);
+        assert_eq!(ge[0].gift_name, "rose");
+        assert_eq!(ge[0].gift_count, 3);
+        let junk = crate::webcast::encode_unknown_frame("WebcastInteractEffectMessage", false);
+        let (_, je) = crate::webcast::events_from_frame(&junk, "vid", "batch");
+        assert!(je.is_empty());
+        let st = crate::webcast::danmu_stats(&ge);
+        assert_eq!(st["gift"], 1);
+    }
+
+    #[test]
+    fn collector_metrics_and_xhs_url() {
+        let v = json!({"data":{"gmv": 12.5, "watch_uv": 9, "foo": 1}});
+        let m = crate::collectors::pick_metrics(&v);
+        assert_eq!(m["gmv"], 12.5);
+        assert_eq!(m["watch_uv"], 9);
+        assert!(m.get("foo").is_none());
+        let p = crate::platforms::match_url("https://www.xiaohongshu.com/livestream/abc").unwrap();
+        assert_eq!(p.spec.platform_value, 4);
+        assert_eq!(p.username, "abc");
+        let job = crate::analysis::AnalysisPipeline::default().run("/no/such.flv", "t");
+        assert!(job.report.contains("stats"));
     }
 
     #[test]

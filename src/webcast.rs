@@ -121,38 +121,82 @@ pub fn events_from_bytes(buf: &[u8], video_id: &str, batch: &str) -> (ImResponse
 }
 
 fn message_to_event(m: &ImMessage, video_id: &str, batch: &str) -> Option<DanmuEvent> {
-    let kind = map_method(&m.method);
+    let kind = map_method(&m.method)?;
     let f = walk(&m.payload);
-    let user_buf = field_bytes(&f, 2).or_else(|| field_bytes(&f, 7));
-    let user = user_buf.map(walk).unwrap_or_default();
-    let nick = field_str(&user, 3).unwrap_or_default();
-    let uid = field_varint(&user, 1)
-        .map(|v| v.to_string())
-        .unwrap_or_default();
-    let content = field_str(&f, 3).unwrap_or_default();
-    let gift = walk(field_bytes(&f, 15).unwrap_or(&[]));
-    let gift_name = field_str(&gift, 16)
-        .or_else(|| field_str(&gift, 2))
-        .unwrap_or_default();
-    let gift_count = field_varint(&f, 6)
-        .or_else(|| field_varint(&f, 5))
-        .or_else(|| field_varint(&f, 4))
-        .unwrap_or(0) as i64;
-    let online = field_varint(&f, 6)
-        .or_else(|| field_varint(&f, 3))
-        .unwrap_or(0) as i64;
-    let ev = DanmuEvent {
+    let user_n = match kind {
+        DanmuType::Gift => 7,
+        DanmuType::Like => 5,
+        DanmuType::FansClub => 4,
+        _ => 2,
+    };
+    let (user_id, nick_name, sec_uid) = parse_user(field_bytes(&f, user_n).unwrap_or(&[]));
+    let mut gift_name = String::new();
+    let mut gift_count = 0i64;
+    let mut online = 0i64;
+    let content = match kind {
+        DanmuType::Chat => {
+            let c = text_field(&f, 3);
+            if c.is_empty() {
+                return None;
+            }
+            c
+        }
+        DanmuType::FansClub => text_field(&f, 3),
+        DanmuType::Gift => {
+            let gift = walk(field_bytes(&f, 15).unwrap_or(&[]));
+            gift_name = text_field(&gift, 16);
+            if gift_name.is_empty() {
+                gift_name = text_field(&gift, 2);
+            }
+            gift_count = field_varint(&f, 6)
+                .or_else(|| field_varint(&f, 5))
+                .or_else(|| field_varint(&f, 4))
+                .unwrap_or(1) as i64;
+            gift_name.clone()
+        }
+        DanmuType::Like => {
+            let n = field_varint(&f, 2).unwrap_or(1);
+            gift_count = n as i64;
+            format!("+{n}")
+        }
+        DanmuType::Enter => {
+            online = field_varint(&f, 3).unwrap_or(0) as i64;
+            let c = text_field(&f, 11);
+            if c.is_empty() {
+                "进入直播间".into()
+            } else {
+                c
+            }
+        }
+        DanmuType::Follow => "关注了主播".into(),
+        DanmuType::Online => {
+            online = field_varint(&f, 3)
+                .or_else(|| field_varint(&f, 5))
+                .unwrap_or(0) as i64;
+            let c = text_field(&f, 6);
+            if c.is_empty() {
+                text_field(&f, 4)
+            } else {
+                c
+            }
+        }
+    };
+    Some(DanmuEvent {
         msg_type: kind as i32,
-        content: if kind == DanmuType::Chat {
-            content
-        } else {
-            content
-        },
-        nick_name: nick,
-        user_id: uid,
+        content,
+        nick_name,
+        user_id,
         gift_name,
-        gift_count: if kind == DanmuType::Gift { gift_count } else { 0 },
-        online: if kind == DanmuType::Online { online } else { 0 },
+        gift_count: if matches!(kind, DanmuType::Gift | DanmuType::Like) {
+            gift_count
+        } else {
+            0
+        },
+        online: if matches!(kind, DanmuType::Online | DanmuType::Enter) {
+            online
+        } else {
+            0
+        },
         event_time: now_str(),
         msg_id: if m.msg_id == 0 {
             String::new()
@@ -161,12 +205,44 @@ fn message_to_event(m: &ImMessage, video_id: &str, batch: &str) -> Option<DanmuE
         },
         batch_number: batch.into(),
         video_id: video_id.into(),
-    };
-    Some(ev)
+        method: m.method.clone(),
+        sec_uid,
+    })
 }
 
-pub fn map_method(method: &str) -> DanmuType {
-    match method {
+fn parse_user(buf: &[u8]) -> (String, String, String) {
+    if buf.is_empty() {
+        return (String::new(), String::new(), String::new());
+    }
+    let u = walk(buf);
+    let id = field_varint(&u, 1)
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let nick = text_field(&u, 3);
+    let mut sec = String::new();
+    for n in [12u32, 18, 21, 38, 46] {
+        let s = text_field(&u, n);
+        if s.len() > 8 {
+            sec = s;
+            break;
+        }
+    }
+    (id, nick, sec)
+}
+
+fn text_field(fields: &[(u32, crate::proto_wire::Wire)], n: u32) -> String {
+    let Some(raw) = field_str(fields, n) else {
+        return String::new();
+    };
+    let t = raw.trim();
+    if t.is_empty() || t.chars().filter(|c| *c == '\u{fffd}').count() > 2 {
+        return String::new();
+    }
+    t.to_string()
+}
+
+pub fn map_method(method: &str) -> Option<DanmuType> {
+    Some(match method {
         "WebcastChatMessage" | "chat" => DanmuType::Chat,
         "WebcastLikeMessage" | "like" => DanmuType::Like,
         "WebcastMemberMessage" | "enter" => DanmuType::Enter,
@@ -174,15 +250,52 @@ pub fn map_method(method: &str) -> DanmuType {
         "WebcastGiftMessage" | "gift" => DanmuType::Gift,
         "WebcastRoomUserSeqMessage" | "online" => DanmuType::Online,
         "WebcastFansclubMessage" => DanmuType::FansClub,
-        _ => DanmuType::Chat,
+        _ => return None,
+    })
+}
+
+pub fn danmu_stats(events: &[DanmuEvent]) -> serde_json::Value {
+    let mut users = std::collections::HashSet::new();
+    let mut chat = 0u64;
+    let mut gift = 0u64;
+    let mut gift_pcs = 0i64;
+    let mut likes = 0i64;
+    let mut enters = 0u64;
+    let mut follows = 0u64;
+    let mut peak = 0i64;
+    for e in events {
+        if !e.user_id.is_empty() {
+            users.insert(e.user_id.clone());
+        }
+        match e.msg_type {
+            x if x == DanmuType::Chat as i32 => chat += 1,
+            x if x == DanmuType::Gift as i32 => {
+                gift += 1;
+                gift_pcs += e.gift_count.max(1);
+            }
+            x if x == DanmuType::Like as i32 => likes += e.gift_count.max(1),
+            x if x == DanmuType::Enter as i32 => enters += 1,
+            x if x == DanmuType::Follow as i32 => follows += 1,
+            x if x == DanmuType::Online as i32 => peak = peak.max(e.online),
+            _ => {}
+        }
+        peak = peak.max(e.online);
     }
+    serde_json::json!({
+        "events": events.len(),
+        "unique_users": users.len(),
+        "chat": chat,
+        "gift": gift,
+        "gift_pieces": gift_pcs,
+        "likes": likes,
+        "enters": enters,
+        "follows": follows,
+        "peak_online": peak,
+    })
 }
 
 #[allow(dead_code)]
 pub fn encode_chat_frame(nick: &str, content: &str, gzip: bool) -> Vec<u8> {
-    use flate2::write::GzEncoder;
-    use flate2::Compression;
-    use std::io::Write;
     let mut user = Vec::new();
     user.extend(encode_varint_field(1, 42));
     user.extend(encode_string(3, nick));
@@ -193,6 +306,41 @@ pub fn encode_chat_frame(nick: &str, content: &str, gzip: bool) -> Vec<u8> {
     msg.extend(encode_string(1, "WebcastChatMessage"));
     msg.extend(encode_len(2, &chat));
     msg.extend(encode_varint_field(3, 7));
+    wrap_msg_frame(msg, gzip)
+}
+
+#[allow(dead_code)]
+pub fn encode_gift_frame(nick: &str, gift: &str, count: u64, gzip: bool) -> Vec<u8> {
+    let mut user = Vec::new();
+    user.extend(encode_varint_field(1, 99));
+    user.extend(encode_string(3, nick));
+    let mut gs = Vec::new();
+    gs.extend(encode_string(16, gift));
+    let mut payload = Vec::new();
+    payload.extend(encode_len(7, &user));
+    payload.extend(encode_varint_field(6, count));
+    payload.extend(encode_len(15, &gs));
+    let mut msg = Vec::new();
+    msg.extend(encode_string(1, "WebcastGiftMessage"));
+    msg.extend(encode_len(2, &payload));
+    msg.extend(encode_varint_field(3, 8));
+    wrap_msg_frame(msg, gzip)
+}
+
+#[allow(dead_code)]
+pub fn encode_unknown_frame(method: &str, gzip: bool) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend(encode_string(3, "InteractEffectSyncData"));
+    let mut msg = Vec::new();
+    msg.extend(encode_string(1, method));
+    msg.extend(encode_len(2, &payload));
+    wrap_msg_frame(msg, gzip)
+}
+
+fn wrap_msg_frame(msg: Vec<u8>, gzip: bool) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
     let mut resp = Vec::new();
     resp.extend(encode_len(1, &msg));
     resp.extend(encode_string(5, "ext"));

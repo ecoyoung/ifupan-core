@@ -207,6 +207,35 @@ pub fn status() -> Value {
     let mut v = current().redacted();
     if let Some(obj) = v.as_object_mut() {
         obj.insert("updated_at".into(), json!(now_str()));
+        obj.insert("compass".into(), json!(!named_cookie("compass").is_empty()));
+        obj.insert("qianchuan".into(), json!(!named_cookie("qianchuan").is_empty()));
     }
     v
+}
+
+pub fn named_cookie(platform: &str) -> String {
+    let env_key = format!("IFUPAN_{}_COOKIE", platform.to_ascii_uppercase());
+    if let Ok(v) = std::env::var(&env_key) {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    if platform == "douyin" {
+        return header();
+    }
+    let store = SINK.lock().unwrap().clone();
+    store
+        .and_then(|s| s.get_web_session(platform).ok())
+        .unwrap_or_default()
+}
+
+pub fn set_named(platform: &str, raw: &str) {
+    if platform == "douyin" || platform.is_empty() {
+        set_raw(raw);
+        return;
+    }
+    let store = SINK.lock().unwrap().clone();
+    if let Some(store) = store {
+        let _ = store.put_web_session(platform, raw);
+    }
 }

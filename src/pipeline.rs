@@ -53,6 +53,7 @@ impl Pipeline {
             "cover": room.cover,
             "error": room.error,
             "wss_url": room.wss_url,
+            "qualities": room.qualities,
             "bean": parsed.spec.bean,
             "platform": parsed.spec.platform_name,
         }))

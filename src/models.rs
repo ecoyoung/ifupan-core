@@ -191,6 +191,8 @@ pub struct LiveRoom {
     pub cover: String,
     pub error: String,
     pub wss_url: String,
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub qualities: serde_json::Value,
 }
 
 impl Default for LiveRoom {
@@ -210,6 +212,7 @@ impl Default for LiveRoom {
             cover: String::new(),
             error: String::new(),
             wss_url: String::new(),
+            qualities: serde_json::Value::Null,
         }
     }
 }
@@ -227,6 +230,10 @@ pub struct DanmuEvent {
     pub msg_id: String,
     pub batch_number: String,
     pub video_id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub method: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub sec_uid: String,
 }
 
 #[derive(Clone, Debug, Serialize)]

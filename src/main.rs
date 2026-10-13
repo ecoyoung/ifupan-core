@@ -32,12 +32,20 @@ enum Cmd {
     },
     /// 常驻弹幕 WSS（打印 JSON 行）
     Barrage { url: String },
-    /// 抖音网页 cookie：查看 / 写入 / 刷新 ttwid
+    /// 网页 cookie：查看 / 写入 / 刷新 ttwid（--platform compass|qianchuan|douyin）
     Session {
         #[arg(long)]
         set: Option<String>,
         #[arg(long)]
         refresh: bool,
+        #[arg(long, default_value = "douyin")]
+        platform: String,
+    },
+    /// 口播 + 弹幕复盘
+    Analyze {
+        path: String,
+        #[arg(long, default_value = "")]
+        title: String,
     },
 }
 
@@ -72,11 +80,11 @@ fn main() {
             });
             api::serve(&host, port, app).expect("serve");
         }
-        Cmd::Session { set, refresh } => {
+        Cmd::Session { set, refresh, platform } => {
             if let Some(raw) = set {
-                ifupan_core::session::set_raw(&raw);
+                ifupan_core::session::set_named(&platform, &raw);
             }
-            if refresh {
+            if refresh && platform == "douyin" {
                 match ifupan_core::session::refresh() {
                     Ok(_) => {}
                     Err(e) => {
@@ -86,6 +94,10 @@ fn main() {
                 }
             }
             println!("{}", serde_json::to_string_pretty(&ifupan_core::session::status()).unwrap());
+        }
+        Cmd::Analyze { path, title } => {
+            let job = ifupan_core::analysis::AnalysisPipeline::default().run(&path, &title);
+            println!("{}", serde_json::to_string_pretty(&job).unwrap());
         }
         Cmd::Barrage { url } => {
             use ifupan_core::barrage::BarrageHub;

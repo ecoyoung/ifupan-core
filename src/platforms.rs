@@ -35,6 +35,20 @@ pub fn default_specs() -> Vec<PlatformSpec> {
             "小红书直播",
             4,
         ),
+        spec(
+            "https://www.xiaohongshu.com/",
+            "XhsLive",
+            "小红书直播地址",
+            "小红书直播",
+            4,
+        ),
+        spec(
+            "https://xhslink.com/",
+            "XhsShareLive",
+            "小红书分享地址",
+            "小红书直播",
+            4,
+        ),
     ]
 }
 
@@ -131,6 +145,12 @@ pub fn match_url(url: &str) -> Result<ParsedLiveUrl, String> {
         }
         x if x == PlatformValue::Xiaohongshu as i32 => {
             if let Some(c) = Regex::new(r"redelight\.cn/[^/]+/([^/?#]+)")
+                .unwrap()
+                .captures(&normalized)
+            {
+                out.username = c[1].to_string();
+            }
+            if let Some(c) = Regex::new(r"xiaohongshu\.com/(?:livestream|live)/([^/?#]+)")
                 .unwrap()
                 .captures(&normalized)
             {
