@@ -1,55 +1,13 @@
-//! Local Douyin WSS signature via bundled `fp.data` + Node (`frontierSign`).
-//! Optional remote SignWss remains behind IFUPAN_SIGN_URL/KEY (not required).
+//! Local Douyin WSS signature: MD5 X-MS-STUB + `fp.data` frontierSign (Node).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Once;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use serde_json::{json, Value};
-
-static LOAD: Once = Once::new();
 
 const SDK: &str = "1.0.12";
 const UA_VER: &str = "5.0+(Windows+NT+10.0%3b+Win64%3b+x64)+AppleWebKit%2f537.36+(KHTML%2c+like+Gecko)+Chrome%2f126.0.0.0+Safari%2f537.36";
 
-pub fn load_env() {
-    LOAD.call_once(|| {
-        for p in [".env", "data/sign.env", "./data/sign.env"] {
-            absorb_file(Path::new(p));
-        }
-    });
-}
-
-fn absorb_file(path: &Path) {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return;
-    };
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((k, v)) = line.split_once('=') else {
-            continue;
-        };
-        let k = k.trim();
-        let v = v.trim().trim_matches('"').trim_matches('\'');
-        if k.starts_with("IFUPAN_") && std::env::var(k).is_err() {
-            std::env::set_var(k, v);
-        }
-    }
-}
-
 pub fn configured() -> bool {
-    load_env();
-    fp_path().is_some() || remote_configured()
-}
-
-fn remote_configured() -> bool {
-    let url = std::env::var("IFUPAN_SIGN_URL").unwrap_or_default();
-    let key = std::env::var("IFUPAN_SIGN_KEY").unwrap_or_default();
-    url.starts_with("http") && !key.is_empty()
+    fp_path().is_some() && frontier_script().is_some() && which("node").is_some()
 }
 
 pub fn user_unique_id() -> String {
@@ -57,7 +15,6 @@ pub fn user_unique_id() -> String {
     format!("{}", 1_000_000_000_000_000_000u128 + (n % 8_999_999_999_999_999_999u128))
 }
 
-/// Comma list hashed as X-MS-STUB (BarrageGrab / webcast SDK).
 pub fn stub_params(room_id: &str, user_unique_id: &str) -> String {
     format!(
         "live_id=1,aid=6383,version_code=180800,webcast_sdk_version={SDK},room_id={room_id},sub_room_id=,sub_channel_id=,did_rule=3,user_unique_id={user_unique_id},device_platform=web,device_type=,ac=,identity=audience"
@@ -75,29 +32,14 @@ pub fn unsigned_wss(room_id: &str, user_unique_id: &str) -> String {
 }
 
 pub fn sign_wss(room_id: &str) -> Result<String, String> {
-    load_env();
     if room_id.is_empty() {
         return Err("room_id required".into());
     }
-    match sign_local(room_id) {
-        Ok(u) => return Ok(u),
-        Err(e) => {
-            if !remote_configured() {
-                return Err(e);
-            }
-            eprintln!("barrage local sign skipped: {e}");
-        }
-    }
-    sign_remote(room_id)
-}
-
-pub fn sign_local(room_id: &str) -> Result<String, String> {
-    let fp = fp_path().ok_or_else(|| "fp.data not found (copy original fp/fp.data to data/fp.data)".to_string())?;
+    let fp = fp_path().ok_or_else(|| "fp.data not found (copy fp/fp.data to data/fp.data)".to_string())?;
     let script = frontier_script().ok_or_else(|| "scripts/frontier_sign.js not found".to_string())?;
     let node = which("node").ok_or_else(|| "node not on PATH".to_string())?;
     let uid = user_unique_id();
-    let params = stub_params(room_id, &uid);
-    let stub = x_ms_stub(&params);
+    let stub = x_ms_stub(&stub_params(room_id, &uid));
     let out = Command::new(node)
         .arg(&script)
         .arg(&stub)
@@ -117,51 +59,6 @@ pub fn sign_local(room_id: &str) -> Result<String, String> {
     Ok(format!("{}&signature={sig}", unsigned_wss(room_id, &uid)))
 }
 
-fn sign_remote(room_id: &str) -> Result<String, String> {
-    let url = std::env::var("IFUPAN_SIGN_URL").unwrap_or_default();
-    let key = std::env::var("IFUPAN_SIGN_KEY").unwrap_or_default();
-    let uid = user_unique_id();
-    let body = json!({
-        "ApiKey": key,
-        "RoomId": room_id,
-        "UserUniqueId": uid,
-    });
-    let resp = crate::detector::agent()
-        .post(&url)
-        .set("Content-Type", "application/json")
-        .send_json(body)
-        .map_err(|e| e.to_string())?;
-    let v: Value = resp.into_json().map_err(|e| e.to_string())?;
-    parse_wss_url(&v)
-}
-
-pub fn parse_wss_url(v: &Value) -> Result<String, String> {
-    let code = v
-        .get("Code")
-        .or_else(|| v.get("code"))
-        .and_then(|x| x.as_i64())
-        .unwrap_or(-1);
-    if code != 0 {
-        let msg = v
-            .get("Msg")
-            .or_else(|| v.get("msg"))
-            .and_then(|x| x.as_str())
-            .unwrap_or("sign failed");
-        return Err(msg.into());
-    }
-    let data = v.get("Data").or_else(|| v.get("data")).cloned().unwrap_or(Value::Null);
-    let wss = data
-        .get("WssUrl")
-        .or_else(|| data.get("wssUrl"))
-        .or_else(|| data.get("wss_url"))
-        .and_then(|x| x.as_str())
-        .unwrap_or("");
-    if !wss.starts_with("wss://") {
-        return Err("no WssUrl".into());
-    }
-    Ok(wss.to_string())
-}
-
 pub fn redact_wss(url: &str) -> String {
     match url.split_once("signature=") {
         Some((head, rest)) => {
@@ -173,7 +70,6 @@ pub fn redact_wss(url: &str) -> String {
 }
 
 fn fp_path() -> Option<PathBuf> {
-    load_env();
     let mut cands: Vec<PathBuf> = Vec::new();
     if let Ok(p) = std::env::var("IFUPAN_FP") {
         cands.push(PathBuf::from(p));
@@ -207,12 +103,4 @@ fn which(name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-#[allow(dead_code)]
-fn now_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
 }

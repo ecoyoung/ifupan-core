@@ -151,7 +151,7 @@ cp /path/to/fp.data data/fp.data
 cargo run -- barrage https://live.douyin.com/<web_rid>
 ```
 
-An HTTP SignWss (`IFUPAN_SIGN_URL` / `IFUPAN_SIGN_KEY`) is only a fallback if `fp.data` is missing. Do not commit keys.
+
 
 `ARK_API_KEY` enables Volcengine Ark completions (`doubao-pro-32k`). Without it, diagnosis returns a structured placeholder.
 

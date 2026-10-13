@@ -151,7 +151,7 @@ cp /path/to/fp.data data/fp.data
 cargo run -- barrage https://live.douyin.com/<web_rid>
 ```
 
-`IFUPAN_SIGN_URL` / `IFUPAN_SIGN_KEY` 只在没有 `fp.data` 时才当备用。密钥不要提交。
+
 
 设置 `ARK_API_KEY` 后走火山方舟（`doubao-pro-32k`）。没有 key 时诊断返回结构化占位。
 

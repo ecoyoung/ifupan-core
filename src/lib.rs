@@ -170,21 +170,18 @@ mod tests {
     }
 
     #[test]
-    fn sign_parse_wss_url() {
-        let v = json!({
-            "Code": 0,
-            "Data": {"WssUrl": "wss://webcast5-ws-web-lf.douyin.com/webcast/im/push/v2/?room_id=1&signature=abc"}
-        });
-        let u = crate::sign::parse_wss_url(&v).unwrap();
-        assert!(u.contains("signature=abc"));
-        let red = crate::sign::redact_wss(&u);
-        assert!(!red.contains("abc"));
+    fn sign_stub_md5() {
         assert!(crate::sign::user_unique_id().len() >= 19);
         let params = crate::sign::stub_params("7695952605281110819", "2477807613760054152");
         assert_eq!(
             crate::sign::x_ms_stub(&params),
             "92b54bea64f3c5a3c309d1520cd5e92d"
         );
+        let u = format!(
+            "{}&signature=abc",
+            crate::sign::unsigned_wss("1", "2")
+        );
+        assert!(!crate::sign::redact_wss(&u).contains("abc"));
     }
 
     #[test]
