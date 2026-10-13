@@ -1,6 +1,6 @@
-# ifupan-core
+# Live Record Analysis
 
-**A live-commerce review engine in Rust.**
+**直播录制分析 — a live recording and analysis engine in Rust.**
 
 Classify a room URL, detect whether it is on air, ingest the stream in duration-sliced segments, fold realtime events, optionally pull platform dashboards, then run ASR + LLM diagnosis — all behind a local control plane.
 
@@ -173,7 +173,7 @@ Covered by tests: URL algebra, SQLite roster, local REST, danmaku type map, gzip
 
 ```
 cargo test
-# 13 passed
+# 15 passed
 ```
 
 ## License

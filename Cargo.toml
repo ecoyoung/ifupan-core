@@ -1,8 +1,8 @@
 [package]
-name = "ifupan-core"
+name = "live-record-analysis"
 version = "0.1.0"
 edition = "2021"
-description = "Live-commerce review engine: probe, ingest, barrage, local control plane"
+description = "Live recording and analysis: probe, ingest, danmaku, local control plane"
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

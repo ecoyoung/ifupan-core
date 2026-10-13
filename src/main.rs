@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use ifupan_core::api::{self, App};
-use ifupan_core::pipeline::Pipeline;
+use live_record_analysis::api::{self, App};
+use live_record_analysis::pipeline::Pipeline;
 
 #[derive(Parser)]
-#[command(name = "ifupan-core", about = "爱复盘核心流水线（Rust 复刻）")]
+#[command(name = "live-record", about = "直播录制分析")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -86,10 +86,10 @@ fn main() {
         }
         Cmd::Session { set, refresh, platform } => {
             if let Some(raw) = set {
-                ifupan_core::session::set_named(&platform, &raw);
+                live_record_analysis::session::set_named(&platform, &raw);
             }
             if refresh && platform == "douyin" {
-                match ifupan_core::session::refresh() {
+                match live_record_analysis::session::refresh() {
                     Ok(_) => {}
                     Err(e) => {
                         eprintln!("{e}");
@@ -97,24 +97,24 @@ fn main() {
                     }
                 }
             }
-            println!("{}", serde_json::to_string_pretty(&ifupan_core::session::status()).unwrap());
+            println!("{}", serde_json::to_string_pretty(&live_record_analysis::session::status()).unwrap());
         }
         Cmd::Analyze { path, title } => {
-            let job = ifupan_core::analysis::AnalysisPipeline::default().run(&path, &title);
+            let job = live_record_analysis::analysis::AnalysisPipeline::default().run(&path, &title);
             println!("{}", serde_json::to_string_pretty(&job).unwrap());
         }
         Cmd::Collect { url } => {
-            let room = ifupan_core::detector::detect(&url);
-            let mut a = ifupan_core::models::Anchor {
+            let room = live_record_analysis::detector::detect(&url);
+            let mut a = live_record_analysis::models::Anchor {
                 source_url: url.clone(),
                 live_url: url,
                 sec_uid: room.sec_uid.clone(),
                 web_rid: room.web_rid.clone(),
                 id: Some(0),
-                ..ifupan_core::models::Anchor::default()
+                ..live_record_analysis::models::Anchor::default()
             };
             a.anchor_name = room.nickname.clone();
-            let rows = ifupan_core::collectors::collect_all(&a, Some(&room));
+            let rows = live_record_analysis::collectors::collect_all(&a, Some(&room));
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"room": room, "collect": rows})).unwrap()
@@ -130,9 +130,9 @@ fn main() {
             }
         }
         Cmd::Barrage { url } => {
-            use ifupan_core::barrage::BarrageHub;
-            use ifupan_core::barrage_ws::BarrageStart;
-            use ifupan_core::detector::detect;
+            use live_record_analysis::barrage::BarrageHub;
+            use live_record_analysis::barrage_ws::BarrageStart;
+            use live_record_analysis::detector::detect;
             let room = detect(&url);
             if room.room_id.is_empty() && room.wss_url.is_empty() {
                 eprintln!("no room_id/wss_url: {}", room.error);

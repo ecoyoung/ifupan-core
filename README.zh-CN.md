@@ -1,6 +1,6 @@
-# ifupan-core
+# 直播录制分析
 
-**用 Rust 写的直播复盘引擎。**
+**Live Record Analysis — 用 Rust 写的直播录制与分析引擎。**
 
 识别直播间 URL、探测是否开播、按时长切片拉流、折叠实时事件、按需拉取平台看板，再走 ASR + LLM 诊断。全部挂在本地控制面上。
 
@@ -173,7 +173,7 @@ cargo run -- barrage https://live.douyin.com/<web_rid>
 
 ```
 cargo test
-# 13 passed
+# 15 passed
 ```
 
 ## 许可
